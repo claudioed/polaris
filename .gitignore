@@ -1,0 +1,8 @@
+coverage.out
+bin/
+.DS_Store
+.idea/
+/polaris
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo

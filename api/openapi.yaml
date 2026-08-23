@@ -1,0 +1,2970 @@
+openapi: 3.0.3
+info:
+  title: Polaris API
+  version: 1.0.0
+  summary: Squad-owned architectural fitness-function control plane and measurement receiver.
+  description: |
+    Polaris enables engineering squads to define, operate, and evolve **architectural fitness
+    functions** for the systems they own, and answers five business questions:
+
+    1. What architectural characteristics does a squad intend to protect?
+    2. How will the squad determine whether those characteristics remain fit?
+    3. What was evaluated, when, using which definition, and with what evidence?
+    4. What response is expected when a fitness function is not satisfied?
+    5. Where is architectural fitness improving, degrading, stale, or unknown?
+
+    Polaris is both the control plane and the measurement receiver. It acquires measurements
+    in two ways: producers `PUSH` measurements through the API, or Polaris `PULL`s them by
+    executing squad-defined queries against registered measurement sources (Prometheus is
+    the first provider). It normalizes acquired data into measurements, calculates the
+    declared outcome deterministically from the active version, preserves evidence and
+    history, and applies the squad's enforcement decision.
+
+    ### Conventions
+
+    - **Base path**: all operations live under `/api/v1`. The live contract document is
+      served at `/openapi.yaml`.
+    - **Identifiers** are opaque UUID v4/v7 strings.
+    - **Dates and times** are ISO 8601 UTC (`RFC 3339`, e.g. `2026-07-25T17:00:02Z`).
+    - **Media types**: request and response bodies are `application/json`; errors are
+      `application/problem+json` (RFC 9457).
+    - **Pagination**: every collection is cursor-paginated. Pass `limit` (1-200, default 50)
+      and follow `nextCursor` until it is absent. Cursors are opaque; values outside the
+      documented range are clamped, not rejected. Pages are ordered by creation time,
+      oldest first.
+    - **Concurrency**: fitness-function mutations are guarded by optimistic concurrency.
+      `GET` responses expose the aggregate `revision`, and mutations that create or update
+      versions require `If-Match: "<revision>"`. A stale revision yields `409 Conflict`,
+      never a silent lost update.
+    - **Idempotency**: `POST /fitness-functions/{id}/measurement-submissions` is deduplicated
+      by the natural key `producerId` + `externalRunId`. A replayed submission returns the
+      original evaluation with `"replayed": true` and is never applied twice. The
+      `Idempotency-Key` header is accepted on mutating operations and reserved for
+      server-side request de-duplication in a later version; v1 does not key on it.
+    - **Asynchronous operations**: evaluation requests and on-demand collection attempts are
+      accepted with `202 Accepted` and polled via the returned resource.
+    - **Lifecycle actions** with business meaning are modeled as subordinate resources
+      (`.../activations`, `.../retirements`, `.../archivals`, `.../approvals`, ...) rather
+      than verb endpoints, so every decision is auditable and retains its own evidence.
+
+    ### Errors
+
+    Every non-2xx response is a problem document (`application/problem+json`) with stable
+    machine-readable `code` values and a `correlationId` that also appears in server logs:
+
+    | Status | `code` | Meaning |
+    |--------|--------|---------|
+    | 400 | `INVALID_JSON` | Request body is not decodable JSON or contains unknown fields. |
+    | 400 | `INVALID_REQUEST` | A required query parameter is missing. |
+    | 404 | `RESOURCE_NOT_FOUND` | The addressed resource (or parent scope) does not exist. |
+    | 409 | `RESOURCE_CONFLICT` | Unique-constraint, lifecycle, or optimistic-concurrency (`If-Match`) conflict. |
+    | 422 | `INVALID_REQUEST` | The body is well formed but violates domain validation rules. |
+    | 500 | `INTERNAL_ERROR` | Unexpected server-side failure. |
+
+    ### Authentication
+
+    Version 1 intentionally runs **without authentication**. No route requires credentials
+    and every HTTP-originated change is audited under the actor `anonymous`. Do not expose
+    this version to an untrusted network; put network-level controls in front of it until an
+    application authentication mode is introduced.
+  contact:
+    name: Polaris maintainers
+  license:
+    name: proprietary
+  externalDocs:
+    url: https://github.com/claudioed/polaris/blob/main/polaris.md
+    description: Polaris domain and REST API specification (polaris.md)
+servers:
+  - url: /api/v1
+    description: Version 1 API served by the Polaris control plane. A development Prometheus
+      instance and PostgreSQL run alongside; see the README for the local Docker Compose stack.
+security:
+  - googleOidc: []
+tags:
+  - name: Health
+    description: |
+      Process probes. Liveness reports whether the process should be restarted;
+      readiness reports whether Polaris can serve traffic — it verifies the
+      PostgreSQL system of record and fails with `503` while the dependency is down.
+  - name: Tribes
+    description: |
+      Tribe resources (`/tribes`): the topology level that groups squads. Tribes publish
+      templates and see cross-squad overviews but never take ownership of squad fitness
+      functions. Archiving a tribe is an explicit, auditable lifecycle decision;
+      archived tribes remain queryable for history.
+  - name: Squads
+    description: |
+      Squad resources (`/squads`, registered under `/tribes/{tribeId}/squads`): the
+      owning unit of fitness targets, measurement sources, measurement producers, and
+      fitness functions. Squad ownership survives tribe transfers.
+  - name: Fitness Targets
+    description: |
+      Fitness target resources (`/fitness-targets`, registered under
+      `/squads/{squadId}/fitness-targets`): the systems (services, databases, queues,
+      ...) for which a squad is architecturally accountable. Fitness functions declare
+      targets in their scope; targets move through `ACTIVE`, `DEPRECATED`, `RETIRED`.
+  - name: Measurement Providers
+    description: |
+      Provider capability catalog (`/measurement-provider-types`). Discover which pull
+      providers (e.g. Prometheus) and query capabilities Polaris supports instead of
+      hard-coding provider assumptions. New providers appear here without changing
+      source, collection-attempt, or evaluation resource shapes.
+  - name: Measurement Sources
+    description: |
+      Measurement source resources (`/measurement-sources`, registered under
+      `/squads/{squadId}/measurement-sources`): squad-owned connections to measurement
+      providers. A source starts in `DRAFT`, must pass a connection check, and is then
+      activated; retirement is blocked while active fitness-function versions still
+      depend on it. Also covers connection checks and query validations.
+  - name: Measurement Producers
+    description: |
+      Measurement producer resources (`/squads/{squadId}/measurement-producers`): push
+      identities authorized to submit measurements. A push acquisition declares exactly
+      one producer, and only that producer may submit against it.
+  - name: Fitness Functions
+    description: |
+      Fitness function resources (`/fitness-functions`, created under
+      `/squads/{squadId}/fitness-functions`): versioned definitions of intent, scope,
+      criteria, acquisition, freshness, and enforcement. Definitions evolve as
+      immutable draft-then-activate versions guarded by `If-Match` optimistic
+      concurrency; aggregate retirement is terminal.
+  - name: Measurement Submissions
+    description: |
+      Push acquisition (`.../measurement-submissions`, `/measurement-submission-batches`):
+      producers submit run measurements that are evaluated synchronously against the
+      active version. Deduplicated by `producerId` + `externalRunId`; batches report
+      per-item results with `207 Multi-Status`.
+  - name: Evaluation Requests
+    description: |
+      Evaluation request resources (`/evaluation-requests`, created under
+      `/fitness-functions/{id}/evaluation-requests`): asynchronous requests that a
+      function be evaluated. Accepted with `202`, polled until fulfilled, cancellable
+      while `PENDING`.
+  - name: Evaluations
+    description: |
+      Evaluation resources (`/evaluations`, listed under
+      `/fitness-functions/{id}/evaluations`): immutable recorded outcomes of applying
+      the active definition to a measurement set — per-criterion results, overall
+      outcome, disposition under the declared enforcement, and the freshness window.
+  - name: Collection Attempts
+    description: |
+      Pull acquisition (`/collection-attempts`, created under
+      `/fitness-functions/{id}/collection-attempts`): retained executions of the active
+      pull definition — scheduled or on-demand — with their measurements and provider
+      evidence. Failed attempts can be retried.
+  - name: Waivers
+    description: |
+      Waiver resources (`/waivers`, proposed under
+      `/fitness-functions/{id}/waivers`): explicit, justified, time-limited exceptions
+      for failing criteria. Proposals are approved, rejected, or revoked through
+      separate audited decisions; only approved, unexpired waivers influence
+      dispositions.
+  - name: Fitness Function Templates
+    description: |
+      Template resources (`/fitness-function-templates`, published under
+      `/tribes/{tribeId}/fitness-function-templates`): tribe-published reusable
+      definitions. Adoption always creates a squad-owned draft — never tribe ownership.
+  - name: Insights
+    description: |
+      Read-model aggregates: squad and tribe fitness overviews plus per-target fitness
+      history. They expose patterns without collapsing them into a single universal
+      score.
+  - name: Events
+    description: |
+      Delivery events (`/events`, `/event-acknowledgements`) published through the
+      transactional outbox. Consumers poll with a durable cursor per `consumerId` and
+      acknowledge processed events; acknowledged events are never redelivered.
+paths:
+  /health/live:
+    get:
+      operationId: getLiveness
+      tags: [Health]
+      summary: Report process liveness.
+      security: []
+      description: |
+        Returns `200` while the process is alive. This check has no dependencies and never
+        inspects the database; use it for restart probes. For traffic routing use
+        `GET /health/ready`.
+      responses:
+        "200":
+          $ref: "#/components/responses/Health"
+  /health/ready:
+    get:
+      operationId: getReadiness
+      tags: [Health]
+      summary: Report readiness to serve traffic.
+      security: []
+      description: |
+        Verifies connectivity to the PostgreSQL system of record. Returns `503` with a
+        problem document while the dependency is unavailable; the response carries a
+        `Retry-After` header (seconds) suggesting when to probe again.
+      responses:
+        "200":
+          $ref: "#/components/responses/Health"
+        "503":
+          description: The service is not ready because a dependency check failed.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              example:
+                type: https://polaris.local/problems/service-unavailable
+                title: Service Unavailable
+                status: 503
+                code: INTERNAL_ERROR
+                detail: database ping failed
+                correlationId: corr_01K0RA
+  /tribes:
+    get:
+      operationId: listTribes
+      tags: [Tribes]
+      summary: List tribes.
+      description: |
+        Returns all tribes ordered by creation time, oldest first. Archive a tribe with
+        `POST /tribes/{tribeId}/archivals` rather than filtering here.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of tribes.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TribePage" }
+    post:
+      operationId: createTribe
+      tags: [Tribes]
+      summary: Create a tribe.
+      description: |
+        Registers a tribe that will contain squads. The name should be stable and
+        recognizable because squads, templates, and tribe overviews reference it. The
+        created tribe is immediately `ACTIVE`.
+      requestBody:
+        $ref: "#/components/requestBodies/CreateTribeRequest"
+      responses:
+        "201":
+          description: Tribe created. The `Location` header addresses the new tribe.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tribe" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /tribes/{tribeId}:
+    get:
+      operationId: getTribe
+      tags: [Tribes]
+      summary: Get a tribe.
+      description: Returns the tribe's current status, revision, and descriptive data.
+      parameters: [{ $ref: "#/components/parameters/TribeId" }]
+      responses:
+        "200":
+          description: The tribe.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tribe" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /tribes/{tribeId}/archivals:
+    post:
+      operationId: archiveTribe
+      tags: [Tribes]
+      summary: Archive a tribe.
+      description: |
+        Records the business decision to retire a tribe from the active topology. The tribe
+        and its history remain queryable; the status becomes `ARCHIVED`. Supply a reason so
+        the audit trail explains the decision.
+      parameters:
+        - $ref: "#/components/parameters/TribeId"
+      requestBody:
+        $ref: "#/components/requestBodies/ArchiveRequest"
+      responses:
+        "201":
+          description: Archival recorded. The `Location` header addresses the tribe.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tribe" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /tribes/{tribeId}/squads:
+    get:
+      operationId: listSquads
+      tags: [Squads]
+      summary: List squads in a tribe.
+      description: Returns the squads currently belonging to the tribe, oldest first.
+      parameters:
+        - $ref: "#/components/parameters/TribeId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of squads.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SquadPage" }
+    post:
+      operationId: createSquad
+      tags: [Squads]
+      summary: Register a squad in a tribe.
+      description: |
+        Creates a squad owned by the addressed tribe. The squad will own fitness targets,
+        measurement sources, producers, and fitness functions. Returns `404` when the
+        tribe does not exist.
+      parameters:
+        - $ref: "#/components/parameters/TribeId"
+      requestBody:
+        $ref: "#/components/requestBodies/CreateSquadRequest"
+      responses:
+        "201":
+          description: Squad created. The `Location` header addresses the new squad.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Squad" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /squads/{squadId}:
+    get:
+      operationId: getSquad
+      tags: [Squads]
+      summary: Get a squad.
+      description: Returns the squad's tribe, status, revision, and descriptive data.
+      parameters: [{ $ref: "#/components/parameters/SquadId" }]
+      responses:
+        "200":
+          description: The squad.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Squad" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /squads/{squadId}/transfers:
+    post:
+      operationId: transferSquad
+      tags: [Squads]
+      summary: Transfer a squad to another tribe.
+      description: |
+        Moves the squad (with all of its targets, sources, and fitness functions) to the
+        destination tribe. Ownership never changes hands: the squad keeps everything it
+        owns. Supply the destination `tribeId`; a reason is recommended for the audit
+        trail. Returns `404` when the destination tribe does not exist.
+      parameters:
+        - $ref: "#/components/parameters/SquadId"
+      requestBody:
+        $ref: "#/components/requestBodies/SquadTransferRequest"
+      responses:
+        "201":
+          description: Transfer recorded. The `Location` header addresses the squad.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Squad" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /squads/{squadId}/fitness-targets:
+    get:
+      operationId: listFitnessTargets
+      tags: [Fitness Targets]
+      summary: List a squad's fitness targets.
+      description: Returns the systems the squad is accountable for, oldest first.
+      parameters:
+        - $ref: "#/components/parameters/SquadId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of fitness targets.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FitnessTargetPage" }
+    post:
+      operationId: createFitnessTarget
+      tags: [Fitness Targets]
+      summary: Register a fitness target.
+      description: |
+        Registers a system for which the squad is architecturally accountable. Fitness
+        functions declare target ids in their scope. Returns `404` when the squad does
+        not exist.
+      parameters:
+        - $ref: "#/components/parameters/SquadId"
+      requestBody:
+        $ref: "#/components/requestBodies/CreateFitnessTargetRequest"
+      responses:
+        "201":
+          description: Target created with lifecycle `ACTIVE`. The `Location` header addresses it.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FitnessTarget" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /fitness-targets/{targetId}:
+    get:
+      operationId: getFitnessTarget
+      tags: [Fitness Targets]
+      summary: Get a fitness target.
+      description: Returns the target's lifecycle, revision, and descriptive data.
+      parameters: [{ $ref: "#/components/parameters/TargetId" }]
+      responses:
+        "200":
+          description: The fitness target.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FitnessTarget" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /fitness-targets/{targetId}/lifecycle-transitions:
+    post:
+      operationId: transitionFitnessTarget
+      tags: [Fitness Targets]
+      summary: Change a target's lifecycle.
+      description: |
+        Applies an explicit lifecycle transition (`ACTIVE`, `DEPRECATED`, or `RETIRED`) to
+        the target. Use `DEPRECATED` when a replacement exists and `RETIRED` when the
+        system is gone; both keep history queryable.
+      parameters:
+        - $ref: "#/components/parameters/TargetId"
+      requestBody:
+        $ref: "#/components/requestBodies/FitnessTargetLifecycleRequest"
+      responses:
+        "201":
+          description: Transition recorded. The `Location` header addresses the target.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FitnessTarget" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /measurement-provider-types:
+    get:
+      operationId: listMeasurementProviderTypes
+      tags: [Measurement Providers]
+      summary: List supported measurement provider types.
+      description: |
+        Capability discovery for pull providers. Clients must use this resource instead of
+        assuming every provider behaves like Prometheus. Each entry states the query
+        capabilities and the supported outbound authentication modes. New providers (e.g.
+        Grafana) will appear here without changing source, collection-attempt, or
+        evaluation resource shapes.
+      responses:
+        "200":
+          description: Supported provider types.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeasurementProviderTypePage" }
+              example:
+                items:
+                  - type: PROMETHEUS
+                    capabilities: [INSTANT_QUERY, RANGE_QUERY]
+                    authenticationModes: [NONE]
+  /squads/{squadId}/measurement-sources:
+    get:
+      operationId: listMeasurementSources
+      tags: [Measurement Sources]
+      summary: List a squad's measurement sources.
+      description: Returns the squad's registered provider connections, oldest first.
+      parameters:
+        - $ref: "#/components/parameters/SquadId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of measurement sources.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeasurementSourcePage" }
+    post:
+      operationId: createMeasurementSource
+      tags: [Measurement Sources]
+      summary: Register a measurement source.
+      description: |
+        Registers a squad-owned connection to a measurement provider. The source is
+        created in `DRAFT` and must pass a connection check (`POST .../connection-checks`)
+        before activation. Only `PROMETHEUS` is supported in this version and only
+        outbound authentication mode `NONE`. Credential material must never be sent; the
+        response never contains credentials. Returns `404` when the squad does not exist.
+      parameters:
+        - $ref: "#/components/parameters/SquadId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/CreateMeasurementSourceRequest"
+      responses:
+        "201":
+          description: Source created in `DRAFT`. The `Location` header addresses it.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeasurementSource" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+  /measurement-sources/{sourceId}:
+    get:
+      operationId: getMeasurementSource
+      tags: [Measurement Sources]
+      summary: Get a measurement source.
+      description: Returns the source's status, provider type, base URL, and revision.
+      parameters: [{ $ref: "#/components/parameters/SourceId" }]
+      responses:
+        "200":
+          description: The measurement source.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeasurementSource" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /measurement-sources/{sourceId}/connection-checks:
+    post:
+      operationId: checkMeasurementSource
+      tags: [Measurement Sources]
+      summary: Run a connection check.
+      description: |
+        Probes the provider at the source's base URL and records the attempt. The check
+        itself is retained as evidence with a `SUCCEEDED` or `FAILED` result, a message,
+        and the check time. A failed probe yields `422` with the provider error in
+        `detail`; the failed check is still recorded.
+      parameters:
+        - $ref: "#/components/parameters/SourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: |
+            Check accepted and executed; the retained check record is returned. Its
+            `data.status` is `SUCCEEDED` or `FAILED`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SourceConnectionCheck" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+  /measurement-sources/{sourceId}/query-validations:
+    post:
+      operationId: validateSourceQuery
+      tags: [Measurement Sources]
+      summary: Validate a provider query.
+      description: |
+        Validates a metric query against the source without changing any fitness function.
+        With `executeSample: false` the check is static (`valid: true`). With
+        `executeSample: true` the query is executed once against the provider and the
+        sample value plus provider evidence are returned; a failing sample execution
+        yields `422`. Use this while authoring pull queries.
+      parameters:
+        - $ref: "#/components/parameters/SourceId"
+      requestBody:
+        $ref: "#/components/requestBodies/QueryValidationRequest"
+      responses:
+        "200":
+          description: Validation result; includes sample output when `executeSample` was true.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QueryValidationResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+  /measurement-sources/{sourceId}/activations:
+    post:
+      operationId: activateMeasurementSource
+      tags: [Measurement Sources]
+      summary: Activate a measurement source.
+      description: |
+        Promotes a `DRAFT` source to `ACTIVE` after connectivity has been verified with a
+        connection check. Only active sources can serve pull collection. Record the reason
+        (e.g. which check id was reviewed) for the audit trail.
+      parameters:
+        - $ref: "#/components/parameters/SourceId"
+      requestBody:
+        $ref: "#/components/requestBodies/SourceStateChangeRequest"
+      responses:
+        "201":
+          description: Source activated. The `Location` header addresses the source.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeasurementSource" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /measurement-sources/{sourceId}/retirements:
+    post:
+      operationId: retireMeasurementSource
+      tags: [Measurement Sources]
+      summary: Retire a measurement source.
+      description: |
+        Retires the source so it can no longer serve collection. Retirement is rejected
+        with `409` while an active fitness-function version still depends on the source.
+      parameters:
+        - $ref: "#/components/parameters/SourceId"
+      requestBody:
+        $ref: "#/components/requestBodies/SourceStateChangeRequest"
+      responses:
+        "201":
+          description: Source retired. The `Location` header addresses the source.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeasurementSource" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /squads/{squadId}/fitness-functions:
+    get:
+      operationId: listFitnessFunctions
+      tags: [Fitness Functions]
+      summary: List a squad's fitness functions.
+      description: |
+        Returns the squad's fitness functions with their full version history, oldest
+        first. Each item's `revision` is the value to echo in `If-Match` for the next
+        mutation.
+      parameters:
+        - $ref: "#/components/parameters/SquadId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of fitness functions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FitnessFunctionPage" }
+    post:
+      operationId: createFitnessFunction
+      tags: [Fitness Functions]
+      summary: Create a fitness function (draft version 1).
+      description: |
+        Creates a fitness function owned by the squad with its first draft definition
+        (version 1, state `DRAFT`). Validation enforces: unique criterion keys, warning
+        thresholds milder than failure thresholds when both are declared, targets owned by
+        the squad, acquisition consistency (push needs a declared producer, pull needs a
+        source and at least one query per criterion), and finite threshold values. The
+        function lifecycle starts as `DRAFT`; activation is a separate, explicit step.
+      parameters:
+        - $ref: "#/components/parameters/SquadId"
+      requestBody:
+        $ref: "#/components/requestBodies/FitnessDefinition"
+      responses:
+        "201":
+          description: |
+            Fitness function created with draft version 1. The `Location` header addresses
+            it and the `ETag` header carries its current revision for subsequent
+            `If-Match` mutations.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FitnessFunction" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+  /fitness-functions/{fitnessFunctionId}:
+    get:
+      operationId: getFitnessFunction
+      tags: [Fitness Functions]
+      summary: Get a fitness function.
+      description: |
+        Returns the aggregate: id, owning squad, lifecycle (`DRAFT`, `ACTIVE`, `RETIRED`),
+        current `revision` (echo it in `If-Match`), the active version number, and the
+        complete immutable version history.
+      parameters: [{ $ref: "#/components/parameters/FitnessFunctionId" }]
+      responses:
+        "200":
+          description: The fitness function. The `ETag` header carries the current revision.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FitnessFunction" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /fitness-functions/{fitnessFunctionId}/versions:
+    get:
+      operationId: listFitnessFunctionVersions
+      tags: [Fitness Functions]
+      summary: List the version history.
+      description: |
+        Returns every version of the definition in creation order with its state
+        (`DRAFT`, `ACTIVE`, or `SUPERSEDED`) and activation time where applicable.
+        Activated versions are immutable.
+      parameters: [{ $ref: "#/components/parameters/FitnessFunctionId" }]
+      responses:
+        "200":
+          description: A page of versions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FitnessVersionPage" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createFitnessFunctionVersion
+      tags: [Fitness Functions]
+      summary: Add a new draft version.
+      description: |
+        Appends a new draft version based on the current definition. Requires
+        `If-Match: "<revision>"`; a stale revision yields `409` so concurrent editors
+        cannot silently overwrite each other. Draft versions can be edited
+        (`PATCH .../versions/{version}`) until activated.
+      parameters:
+        - $ref: "#/components/parameters/FitnessFunctionId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        $ref: "#/components/requestBodies/FitnessDefinition"
+      responses:
+        "201":
+          description: Version appended; the aggregate with the new draft is returned.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FitnessFunction" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+  /fitness-functions/{fitnessFunctionId}/versions/{version}:
+    patch:
+      operationId: updateFitnessFunctionVersion
+      tags: [Fitness Functions]
+      summary: Update a draft version.
+      description: |
+        Replaces the definition of a still-`DRAFT` version. Requires
+        `If-Match: "<revision>"`; editing an activated or superseded version, or using a
+        stale revision, yields `409`. Activated versions are immutable by design.
+      parameters:
+        - $ref: "#/components/parameters/FitnessFunctionId"
+        - $ref: "#/components/parameters/Version"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        $ref: "#/components/requestBodies/FitnessDefinition"
+      responses:
+        "200":
+          description: Draft updated; the aggregate is returned with a fresh `ETag`.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FitnessFunction" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+  /fitness-functions/{fitnessFunctionId}/versions/{version}/validations:
+    post:
+      operationId: validateFitnessFunctionVersion
+      tags: [Fitness Functions]
+      summary: Validate a version.
+      description: |
+        Re-runs definition validation (scope ownership, thresholds, acquisition
+        consistency) without side effects and reports the verdict. Useful before
+        activating an older draft that was authored against a different target set.
+      parameters:
+        - $ref: "#/components/parameters/FitnessFunctionId"
+        - $ref: "#/components/parameters/Version"
+      responses:
+        "201":
+          description: Validation verdict.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FitnessVersionValidationResult" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+  /fitness-functions/{fitnessFunctionId}/versions/{version}/activations:
+    post:
+      operationId: activateFitnessFunctionVersion
+      tags: [Fitness Functions]
+      summary: Activate a version.
+      description: |
+        Makes the draft version the active definition and supersedes the previously active
+        one. From this point evaluations use the activated definition, and both the
+        version and its evaluations are immutable. Activating a non-draft version yields
+        `409`.
+      parameters:
+        - $ref: "#/components/parameters/FitnessFunctionId"
+        - $ref: "#/components/parameters/Version"
+      requestBody:
+        $ref: "#/components/requestBodies/SourceStateChangeRequest"
+      responses:
+        "201":
+          description: Version activated; the aggregate is returned with a fresh `ETag`.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FitnessFunction" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+  /fitness-functions/{fitnessFunctionId}/retirements:
+    post:
+      operationId: retireFitnessFunction
+      tags: [Fitness Functions]
+      summary: Retire a fitness function.
+      description: |
+        Retires the whole fitness function. Retired functions stop collecting and
+        evaluating but keep their full history. Retirement is terminal; create a new
+        function instead of un-retiring.
+      parameters:
+        - $ref: "#/components/parameters/FitnessFunctionId"
+      requestBody:
+        $ref: "#/components/requestBodies/SourceStateChangeRequest"
+      responses:
+        "201":
+          description: Function retired; the aggregate is returned with a fresh `ETag`.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FitnessFunction" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /squads/{squadId}/measurement-producers:
+    post:
+      operationId: createMeasurementProducer
+      tags: [Measurement Producers]
+      summary: Register a measurement producer.
+      description: |
+        Registers an identity authorized to push measurements for the squad's push-based
+        fitness functions. A push definition declares exactly one producer id, and only
+        that producer may submit against it. Returns `404` when the squad does not exist.
+      parameters:
+        - $ref: "#/components/parameters/SquadId"
+      requestBody:
+        $ref: "#/components/requestBodies/CreateMeasurementProducerRequest"
+      responses:
+        "201":
+          description: Producer registered. The `Location` header addresses the squad's producer collection.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeasurementProducer" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /fitness-functions/{fitnessFunctionId}/evaluation-requests:
+    post:
+      operationId: createEvaluationRequest
+      tags: [Evaluation Requests]
+      summary: Request an evaluation.
+      description: |
+        Records a request that the fitness function be evaluated. The request is accepted
+        with `202` and enters state `PENDING`; it is fulfilled when a producer pushes a
+        submission carrying the request's id (or by pull collection). Poll the addressed
+        resource to observe completion or cancel it. The request body is an empty object.
+      parameters:
+        - $ref: "#/components/parameters/FitnessFunctionId"
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyRequest"
+      responses:
+        "202":
+          description: |
+            Request accepted for fulfillment. The `Location` header addresses the pending
+            request resource.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EvaluationRequest" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /evaluation-requests/{requestId}:
+    get:
+      operationId: getEvaluationRequest
+      tags: [Evaluation Requests]
+      summary: Get an evaluation request.
+      description: |
+        Poll the request's state: `PENDING` until a matching evaluation is recorded,
+        `CANCELLED` after a cancellation.
+      parameters: [{ $ref: "#/components/parameters/RequestId" }]
+      responses:
+        "200":
+          description: The evaluation request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EvaluationRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /evaluation-requests/{requestId}/cancellations:
+    post:
+      operationId: cancelEvaluationRequest
+      tags: [Evaluation Requests]
+      summary: Cancel an evaluation request.
+      description: |
+        Cancels a `PENDING` request that is no longer wanted (e.g. the triggering pipeline
+        was aborted). Cancelling an already-cancelled request yields `409`.
+      parameters: [{ $ref: "#/components/parameters/RequestId" }]
+      responses:
+        "201":
+          description: Cancellation recorded; the cancelled request is returned.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EvaluationRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /fitness-functions/{fitnessFunctionId}/measurement-submissions:
+    post:
+      operationId: submitMeasurements
+      tags: [Measurement Submissions]
+      summary: Push measurements for evaluation.
+      security:
+        - ingestApiKey: []
+      description: |
+        Submits a run's measurements for the fitness function and returns the recorded
+        evaluation. The submission is evaluated synchronously against the **active**
+        version; submitting against a non-active version yields `409`. The producer must
+        be the one declared by the active definition, and `observedAt` must fall within
+        the definition's maximum observation age. Duplicate deliveries of the same
+        `producerId` + `externalRunId` are deduplicated: the original evaluation is
+        returned with `"replayed": true` and no second evaluation is recorded.
+      parameters:
+        - $ref: "#/components/parameters/FitnessFunctionId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/MeasurementSubmission"
+      responses:
+        "201":
+          description: |
+            Evaluation recorded (or replayed). `replayed` is `true` when a previously
+            recorded evaluation for the same `producerId` + `externalRunId` was returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SubmittedEvaluation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+  /measurement-submission-batches:
+    post:
+      operationId: submitMeasurementBatch
+      tags: [Measurement Submissions]
+      summary: Push a batch of submissions.
+      security:
+        - ingestApiKey: []
+      description: |
+        Applies up to 100 submissions in one call. Each item is processed independently:
+        per-item failures do not abort the batch. The overall response is always
+        `207 Multi-Status`; inspect each item's `status` (`201` success, `404`, `409`,
+        `422`, or `500` failure with `error`). Replayed items carry `"replayed": true`.
+      requestBody:
+        $ref: "#/components/requestBodies/MeasurementBatchRequest"
+      responses:
+        "207":
+          description: Per-item results; success and failure are mixed within the page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BatchResultPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /fitness-functions/{fitnessFunctionId}/collection-attempts:
+    get:
+      operationId: listCollectionAttempts
+      tags: [Collection Attempts]
+      summary: List collection attempts.
+      description: |
+        Returns the retained pull collection attempts for the fitness function, oldest
+        first. Each attempt keeps its measurements and provider evidence.
+      parameters:
+        - $ref: "#/components/parameters/FitnessFunctionId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of collection attempts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CollectionAttemptPage" }
+    post:
+      operationId: createCollectionAttempt
+      tags: [Collection Attempts]
+      summary: Trigger an on-demand collection.
+      description: |
+        Executes the active pull definition immediately (outside its schedule) and
+        returns the recorded evaluation. The attempt, its measurements, and provider
+        evidence are retained. Requires an `ACTIVE` function with a `PULL` acquisition
+        and an `ACTIVE` source; violations yield `422`/`409`. Provider failures surface
+        as `500` with the provider error in `detail`.
+      parameters:
+        - $ref: "#/components/parameters/FitnessFunctionId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: Collection executed; the recorded evaluation is returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Evaluation" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /collection-attempts/{attemptId}:
+    get:
+      operationId: getCollectionAttempt
+      tags: [Collection Attempts]
+      summary: Get a collection attempt.
+      description: Returns the retained attempt with status, measurements, and evidence.
+      parameters: [{ $ref: "#/components/parameters/AttemptId" }]
+      responses:
+        "200":
+          description: The collection attempt.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CollectionAttempt" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /collection-attempts/{attemptId}/retries:
+    post:
+      operationId: retryCollectionAttempt
+      tags: [Collection Attempts]
+      summary: Retry a collection attempt.
+      description: |
+        Re-runs collection for the fitness function that produced the addressed attempt
+        (for example after a provider outage) and returns the new evaluation. The
+        original attempt is retained unchanged and the retry references its origin.
+      parameters:
+        - $ref: "#/components/parameters/AttemptId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: Retry executed; the new evaluation is returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Evaluation" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /evaluations/{evaluationId}:
+    get:
+      operationId: getEvaluation
+      tags: [Evaluations]
+      summary: Get an evaluation.
+      description: |
+        Returns the immutable evaluation: outcome, disposition, per-criterion results,
+        observation time, freshness window, and the retained measurement data and
+        evidence. Evaluations are never modified after recording.
+      parameters: [{ $ref: "#/components/parameters/EvaluationId" }]
+      responses:
+        "200":
+          description: The evaluation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Evaluation" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /fitness-functions/{fitnessFunctionId}/evaluations:
+    get:
+      operationId: listEvaluations
+      tags: [Evaluations]
+      summary: List evaluations for a fitness function.
+      description: |
+        Returns recorded evaluations newest-context-first page ordering (creation order),
+        including the acquiring submission or collection data as evidence.
+      parameters:
+        - $ref: "#/components/parameters/FitnessFunctionId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of evaluations.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EvaluationPage" }
+  /fitness-functions/{fitnessFunctionId}/waivers:
+    post:
+      operationId: createWaiver
+      tags: [Waivers]
+      summary: Propose a waiver.
+      description: |
+        Proposes a time-limited, justified exception for failing criteria of the fitness
+        function. The proposal states the affected criteria, the risk being accepted, a
+        compensating action, and when the exception expires. It enters state `PROPOSED`
+        and only takes effect on approval. `expiresAt` must be in the future.
+      parameters:
+        - $ref: "#/components/parameters/FitnessFunctionId"
+      requestBody:
+        $ref: "#/components/requestBodies/CreateWaiverRequest"
+      responses:
+        "201":
+          description: Waiver proposed. The `Location` header addresses it.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Waiver" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+  /waivers/{waiverId}/{transition}:
+    post:
+      operationId: transitionWaiver
+      tags: [Waivers]
+      summary: Decide on a waiver.
+      description: |
+        Applies a decision to a proposed or approved waiver. `approvals` accept the risk
+        (the waiver then influences dispositions until it expires), `rejections` decline
+        the proposal, and `revocations` end an approved waiver early (e.g. the
+        compensating control disappeared). Deciding twice yields `409`.
+      parameters:
+        - $ref: "#/components/parameters/WaiverId"
+        - $ref: "#/components/parameters/WaiverTransition"
+      requestBody:
+        $ref: "#/components/requestBodies/WaiverDecisionRequest"
+      responses:
+        "201":
+          description: Decision recorded; the updated waiver is returned.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Waiver" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /tribes/{tribeId}/fitness-function-templates:
+    get:
+      operationId: listFitnessFunctionTemplates
+      tags: [Fitness Function Templates]
+      summary: List a tribe's templates.
+      description: Returns the reusable fitness-function definitions the tribe published, oldest first.
+      parameters:
+        - $ref: "#/components/parameters/TribeId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of templates.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FitnessFunctionTemplatePage" }
+    post:
+      operationId: createFitnessFunctionTemplate
+      tags: [Fitness Function Templates]
+      summary: Publish a tribe template.
+      description: |
+        Publishes a reusable definition for squads in the tribe to adopt. Names are
+        unique within a tribe (duplicate names yield `409`). Templates never take
+        ownership of squad fitness functions; adoption always creates a squad-owned draft.
+      parameters:
+        - $ref: "#/components/parameters/TribeId"
+      requestBody:
+        $ref: "#/components/requestBodies/CreateTemplateRequest"
+      responses:
+        "201":
+          description: Template published. The `Location` header addresses it.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FitnessFunctionTemplate" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+  /fitness-function-templates/{templateId}/adoptions:
+    post:
+      operationId: adoptFitnessFunctionTemplate
+      tags: [Fitness Function Templates]
+      summary: Adopt a template.
+      description: |
+        Adopts the tribe template into the addressed squad, creating a squad-owned draft
+        fitness function. The squad may adapt the draft before activating it; the tribe
+        retains no ownership.
+      parameters:
+        - $ref: "#/components/parameters/TemplateId"
+      requestBody:
+        $ref: "#/components/requestBodies/AdoptTemplateRequest"
+      responses:
+        "201":
+          description: Adoption recorded; the created draft is owned by the adopting squad.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TemplateAdoption" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+  /squads/{squadId}/fitness-overview:
+    get:
+      operationId: getSquadFitnessOverview
+      tags: [Insights]
+      summary: Get a squad fitness overview.
+      description: |
+        Aggregated architectural fitness for one squad. The overview is computed from
+        retained evaluations; it surfaces outcomes and dispositions without collapsing
+        them into a single universal score.
+      parameters: [{ $ref: "#/components/parameters/SquadId" }]
+      responses:
+        "200":
+          description: Squad overview document.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FitnessOverview" }
+  /tribes/{tribeId}/fitness-overview:
+    get:
+      operationId: getTribeFitnessOverview
+      tags: [Insights]
+      summary: Get a tribe fitness overview.
+      description: |
+        Aggregated architectural fitness across the tribe's squads. The tribe sees
+        patterns while squad and function identity is retained; no league table is
+        produced.
+      parameters: [{ $ref: "#/components/parameters/TribeId" }]
+      responses:
+        "200":
+          description: Tribe overview document.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FitnessOverview" }
+  /fitness-targets/{targetId}/fitness-history:
+    get:
+      operationId: getFitnessTargetHistory
+      tags: [Insights]
+      summary: Get a target's fitness history.
+      description: |
+        Chronological fitness history entries for one target, oldest first. Entries are
+        derived from retained evaluations scoped to fitness functions covering the target.
+      parameters:
+        - $ref: "#/components/parameters/TargetId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of history entries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResourceRecordPage" }
+  /events:
+    get:
+      operationId: pollEvents
+      tags: [Events]
+      summary: Poll delivery events.
+      description: |
+        Returns outbox events newer than the supplied cursor, oldest first, for at-most-once
+        delivery per consumer. Each consumer identifies itself with `consumerId` and must
+        persist `nextCursor` between polls. After successfully processing events, acknowledge
+        them with `POST /event-acknowledgements`; acknowledged events are never redelivered
+        to that consumer. Polling without `consumerId` yields `400`.
+      parameters:
+        - $ref: "#/components/parameters/ConsumerId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of delivery events.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EventPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /event-acknowledgements:
+    post:
+      operationId: acknowledgeEvents
+      tags: [Events]
+      summary: Acknowledge processed events.
+      description: |
+        Marks the listed events as processed by the consumer. Acknowledgement is
+        idempotent per (consumer, event) pair. At least one event id is required.
+      requestBody:
+        $ref: "#/components/requestBodies/EventAcknowledgementRequest"
+      responses:
+        "201":
+          description: Acknowledgement recorded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EventAcknowledgement" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+components:
+  securitySchemes:
+    googleOidc:
+      type: openIdConnect
+      openIdConnectUrl: https://accounts.google.com/.well-known/openid-configuration
+      description: |
+        Google OpenID Connect. Clients obtain an ID token (Authorization Code with PKCE or
+        Google Identity Services) and send it as `Authorization: Bearer <id_token>`.
+        Polaris verifies issuer, audience, expiry, and signature against Google's published
+        JWKS. Applies to every business endpoint except measurement submissions and health.
+    ingestApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: |
+        Shared secret for the measurement-submission ingest endpoints, configured on the
+        server via `POLARIS_INGEST_SECRET_KEY`. Compared in constant time. Required for
+        `POST /fitness-functions/{fitnessFunctionId}/measurement-submissions` and
+        `POST /measurement-submission-batches`.
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: |
+        Opaque pagination cursor obtained from a previous response's `nextCursor`. Absent
+        or empty means "start from the oldest item". Never parse or reuse cursors across
+        collections.
+      schema: { type: string }
+      example: "01984361-4f3a-7abc-9f0e-2b2a6d5f1c22"
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: |
+        Maximum number of items to return (1-200). Values outside the range are clamped
+        to the nearest bound rather than rejected. Defaults to 50.
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      example: 50
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: |
+        Optimistic-concurrency guard. Echo the aggregate `revision` reported by the most
+        recent `GET` (also exposed as the `ETag` response header) in quotes, e.g.
+        `If-Match: "4"`. A mismatch yields `409 Conflict`.
+      schema: { type: string, pattern: '^"?[0-9]+"?$' }
+      example: '"4"'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Caller-supplied idempotency key. Accepted and logged in v1; server-side
+        de-duplication on this header is reserved for a later version. Measurement
+        submissions are already de-duplicated by `producerId` + `externalRunId`.
+      schema: { type: string, minLength: 1, maxLength: 200 }
+      example: register-commerce-prometheus
+    ConsumerId:
+      name: consumerId
+      in: query
+      required: true
+      description: |
+        Stable identity of the polling consumer (1-100 characters). Pair it with a
+        durable cursor to obtain at-most-once delivery. Missing values yield `400`.
+      schema: { type: string, minLength: 1, maxLength: 100 }
+      example: delivery-webhook-relay
+    WaiverTransition:
+      name: transition
+      in: path
+      required: true
+      description: "The decision to apply: approve, reject, or revoke."
+      schema: { type: string, enum: [approvals, rejections, revocations] }
+    TribeId:
+      name: tribeId
+      in: path
+      required: true
+      description: Identifier of the tribe.
+      schema: { $ref: "#/components/schemas/Id" }
+    SquadId:
+      name: squadId
+      in: path
+      required: true
+      description: Identifier of the squad.
+      schema: { $ref: "#/components/schemas/Id" }
+    TargetId:
+      name: targetId
+      in: path
+      required: true
+      description: Identifier of the fitness target.
+      schema: { $ref: "#/components/schemas/Id" }
+    SourceId:
+      name: sourceId
+      in: path
+      required: true
+      description: Identifier of the measurement source.
+      schema: { $ref: "#/components/schemas/Id" }
+    FitnessFunctionId:
+      name: fitnessFunctionId
+      in: path
+      required: true
+      description: Identifier of the fitness function.
+      schema: { $ref: "#/components/schemas/Id" }
+    Version:
+      name: version
+      in: path
+      required: true
+      description: Version number of the fitness-function definition (starts at 1).
+      schema: { type: integer, minimum: 1 }
+      example: 2
+    RequestId:
+      name: requestId
+      in: path
+      required: true
+      description: Identifier of the evaluation request.
+      schema: { $ref: "#/components/schemas/Id" }
+    AttemptId:
+      name: attemptId
+      in: path
+      required: true
+      description: Identifier of the collection attempt.
+      schema: { $ref: "#/components/schemas/Id" }
+    EvaluationId:
+      name: evaluationId
+      in: path
+      required: true
+      description: Identifier of the evaluation.
+      schema: { $ref: "#/components/schemas/Id" }
+    WaiverId:
+      name: waiverId
+      in: path
+      required: true
+      description: Identifier of the waiver.
+      schema: { $ref: "#/components/schemas/Id" }
+    TemplateId:
+      name: templateId
+      in: path
+      required: true
+      description: Identifier of the fitness-function template.
+      schema: { $ref: "#/components/schemas/Id" }
+  headers:
+    Location:
+      description: URI of the created (or addressed) resource.
+      schema: { type: string, format: uri-reference }
+      example: /api/v1/tribes/01984361-4f3a-7abc-9f0e-2b2a6d5f1c22
+    ETag:
+      description: |
+        Current aggregate revision, quoted. Echo it in `If-Match` for guarded mutations.
+      schema: { type: string }
+      example: '"4"'
+    RetryAfter:
+      description: Suggested delay in seconds before probing readiness again.
+      schema: { type: integer, minimum: 1 }
+      example: 5
+  schemas:
+    Id:
+      type: string
+      format: uuid
+      description: Opaque resource identifier (UUID).
+      example: 01984361-4f3a-7abc-9f0e-2b2a6d5f1c22
+    Health:
+      type: object
+      required: [status]
+      description: Health probe result.
+      properties:
+        status:
+          type: string
+          enum: [ok]
+          description: Always `ok` when the probe succeeds.
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      description: |
+        RFC 9457 problem document. `code` is a stable machine-readable identifier;
+        `correlationId` ties the response to server-side logs.
+      properties:
+        type:
+          type: string
+          format: uri
+          description: Canonical problem type URI under `https://polaris.local/problems/`.
+          example: https://polaris.local/problems/conflict
+        title:
+          type: string
+          description: Short human-readable summary derived from the HTTP status.
+          example: Conflict
+        status:
+          type: integer
+          description: HTTP status code, repeated for RFC 9457 compatibility.
+          example: 409
+        detail:
+          type: string
+          description: Explanation specific to this occurrence, safe for operators.
+          example: "aggregate revision mismatch: expected 4, got 5"
+        instance:
+          type: string
+          description: Request path that produced the problem.
+          example: /api/v1/fitness-functions/0198.../versions
+        code:
+          type: string
+          enum: [INVALID_JSON, INVALID_REQUEST, RESOURCE_NOT_FOUND, RESOURCE_CONFLICT, INTERNAL_ERROR]
+          description: Stable machine-readable error code.
+          example: RESOURCE_CONFLICT
+        correlationId:
+          type: string
+          description: Correlates the response with server logs.
+          example: corr_01K0RA
+    ResourceRecord:
+      type: object
+      description: |
+        Generic record envelope used by store-backed resources. Specialized records add
+        typed `data` and constrain `status`. `revision` increments on every change.
+      required: [id, kind, revision, data, createdAt, updatedAt]
+      properties:
+        id: { $ref: "#/components/schemas/Id" }
+        parentId:
+          allOf: [{ $ref: "#/components/schemas/Id" }]
+          description: Owning resource, when the kind is scoped (e.g. a squad's tribe).
+        kind:
+          type: string
+          description: Discriminator naming the record kind (e.g. `tribe`, `waiver`).
+          example: waiver
+        status:
+          type: string
+          description: Lifecycle status; see the specialized record for its enum.
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Monotonic change counter, starting at 1.
+          example: 3
+        data:
+          type: object
+          additionalProperties: true
+          description: Kind-specific payload; specialized records document its fields.
+        createdAt:
+          type: string
+          format: date-time
+          description: Creation time (UTC).
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last change time (UTC).
+    PageMeta:
+      type: object
+      description: Shared page shape; specialized pages fix the item type.
+      required: [items]
+      properties:
+        items:
+          type: array
+          description: Items in creation order, oldest first.
+        nextCursor:
+          type: string
+          nullable: true
+          description: |
+            Cursor for the next page. Absent when this page is the last one; pass the
+            value back as the `cursor` query parameter.
+          example: "01984361-4f3a-7abc-9f0e-2b2a6d5f1c99"
+    Tribe:
+      allOf:
+        - $ref: "#/components/schemas/ResourceRecord"
+        - type: object
+          description: "A tribe: a group of squads sharing strategic context."
+          properties:
+            kind: { type: string, enum: [tribe] }
+            status:
+              type: string
+              enum: [ACTIVE, ARCHIVED]
+              description: "`ARCHIVED` tribes remain queryable for history."
+            data:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                  description: Recognizable tribe name.
+                  example: Commerce
+                description:
+                  type: string
+                  maxLength: 2000
+                  description: What the tribe is responsible for.
+                  example: Builds customer purchasing and order capabilities
+    TribePage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/Tribe" }
+    Squad:
+      allOf:
+        - $ref: "#/components/schemas/ResourceRecord"
+        - type: object
+          description: A squad within exactly one tribe (`parentId`); owns targets, sources, and fitness functions.
+          properties:
+            kind: { type: string, enum: [squad] }
+            status: { type: string, enum: [ACTIVE] }
+            data:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                  description: Squad name.
+                  example: Checkout
+                mission:
+                  type: string
+                  maxLength: 2000
+                  description: Why the squad exists.
+                  example: Enable customers to complete purchases reliably
+    SquadPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/Squad" }
+    FitnessTarget:
+      allOf:
+        - $ref: "#/components/schemas/ResourceRecord"
+        - type: object
+          description: A system the squad is architecturally accountable for (`parentId` is the squad).
+          properties:
+            kind: { type: string, enum: [fitness-target] }
+            status:
+              type: string
+              enum: [ACTIVE, DEPRECATED, RETIRED]
+              description: Target lifecycle.
+            data:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                  description: Target name.
+                  example: Checkout API
+                description:
+                  type: string
+                  maxLength: 2000
+                  description: What the target does.
+                  example: Accepts and confirms customer purchase requests
+                kind:
+                  type: string
+                  maxLength: 50
+                  description: System category (free-form, e.g. SERVICE, DATABASE, QUEUE).
+                  example: SERVICE
+                criticality:
+                  type: string
+                  maxLength: 50
+                  description: Business criticality label (e.g. CRITICAL, HIGH).
+                  example: CRITICAL
+                externalReference:
+                  type: object
+                  additionalProperties: true
+                  description: Link to an external catalog entry.
+                  example: { catalog: enterprise-service-catalog, id: checkout-api }
+    FitnessTargetPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/FitnessTarget" }
+    MeasurementSource:
+      allOf:
+        - $ref: "#/components/schemas/ResourceRecord"
+        - type: object
+          description: A registered provider connection owned by a squad (`parentId`).
+          properties:
+            kind: { type: string, enum: [measurement-source] }
+            status:
+              type: string
+              enum: [DRAFT, ACTIVE, RETIRED]
+              description: "`DRAFT` until a connection check is accepted via activation."
+            data:
+              type: object
+              required: [name, providerType, baseUrl]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                  description: Source name.
+                  example: Commerce production metrics
+                providerType:
+                  type: string
+                  enum: [PROMETHEUS]
+                  description: Provider adapter that serves this source.
+                  example: PROMETHEUS
+                baseUrl:
+                  type: string
+                  format: uri
+                  description: Provider base URL; never includes credentials.
+                  example: https://prometheus.metrics.example.net
+                description:
+                  type: string
+                  maxLength: 2000
+                  description: Optional notes about the source.
+    MeasurementSourcePage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/MeasurementSource" }
+    MeasurementProviderType:
+      type: object
+      required: [type, capabilities, authenticationModes]
+      description: Capability descriptor for a supported pull provider.
+      properties:
+        type:
+          type: string
+          enum: [PROMETHEUS]
+          description: Provider identifier.
+        capabilities:
+          type: array
+          items: { type: string, enum: [INSTANT_QUERY, RANGE_QUERY] }
+          description: Query capabilities offered by the provider adapter.
+        authenticationModes:
+          type: array
+          items: { type: string, enum: [NONE] }
+          description: Supported outbound authentication modes. Only `NONE` in v1.
+    MeasurementProviderTypePage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/MeasurementProviderType" }
+    SourceConnectionCheck:
+      allOf:
+        - $ref: "#/components/schemas/ResourceRecord"
+        - type: object
+          description: |
+            Retained connection-check evidence for a source (`parentId` is the source id).
+            The check verdict lives in `data.status`.
+          properties:
+            kind: { type: string, enum: [source-connection-check] }
+            data:
+              type: object
+              required: [status, checkedAt]
+              properties:
+                status:
+                  type: string
+                  enum: [SUCCEEDED, FAILED]
+                  description: Probe verdict.
+                message:
+                  type: string
+                  description: Provider error detail when the check failed; empty on success.
+                checkedAt:
+                  type: string
+                  format: date-time
+                  description: When the probe ran.
+    MeasurementProducer:
+      allOf:
+        - $ref: "#/components/schemas/ResourceRecord"
+        - type: object
+          description: A push identity registered by a squad (`parentId`); declared by push definitions.
+          properties:
+            kind: { type: string, enum: [measurement-producer] }
+            status: { type: string, enum: [ACTIVE] }
+            data:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                  description: Producer name.
+                  example: checkout-pipeline
+                description:
+                  type: string
+                  maxLength: 2000
+                  description: What the producer measures.
+    EvaluationRequest:
+      allOf:
+        - $ref: "#/components/schemas/ResourceRecord"
+        - type: object
+          description: A recorded request for evaluation (`parentId` is the fitness function).
+          properties:
+            kind: { type: string, enum: [evaluation-request] }
+            status:
+              type: string
+              enum: [PENDING, CANCELLED]
+              description: "`PENDING` until fulfilled or cancelled."
+            data:
+              type: object
+              additionalProperties: true
+              description: Request annotations.
+    Waiver:
+      allOf:
+        - $ref: "#/components/schemas/ResourceRecord"
+        - type: object
+          description: A justified, time-limited waiver proposal or decision for a fitness function.
+          properties:
+            kind: { type: string, enum: [waiver] }
+            status:
+              type: string
+              enum: [PROPOSED, APPROVED, REJECTED, REVOKED]
+              description: Only `APPROVED` waivers influence dispositions, and only until expiry.
+            data:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+                  description: Why the exception is acceptable.
+                  example: Infrastructure replacement temporarily increases recovery time
+                criterionKeys:
+                  type: array
+                  items: { type: string }
+                  description: Failing criteria the waiver covers; empty means all.
+                  example: [recovery_time]
+                risk:
+                  type: string
+                  maxLength: 2000
+                  description: Risk being accepted.
+                  example: A single-zone failure can delay checkout recovery by up to two minutes
+                compensatingAction:
+                  type: string
+                  maxLength: 2000
+                  description: Mitigation in place during the waiver window.
+                  example: Route traffic to the secondary region and keep rollback ready
+                startsAt:
+                  type: string
+                  format: date-time
+                  description: Waiver window start.
+                expiresAt:
+                  type: string
+                  format: date-time
+                  description: Waiver window end; must be after `startsAt`.
+    CollectionAttempt:
+      allOf:
+        - $ref: "#/components/schemas/ResourceRecord"
+        - type: object
+          description: A retained pull collection attempt (`parentId` is the fitness function).
+          properties:
+            kind: { type: string, enum: [collection-attempt] }
+            status:
+              type: string
+              enum: [SUCCEEDED, FAILED]
+              description: Collection verdict.
+            data:
+              type: object
+              properties:
+                sourceId: { $ref: "#/components/schemas/Id" }
+                measurements:
+                  type: array
+                  items: { $ref: "#/components/schemas/Measurement" }
+                  description: Measurements collected by the attempt.
+                evidence:
+                  type: array
+                  items: { type: object, additionalProperties: true }
+                  description: Provider evidence per query.
+    CollectionAttemptPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/CollectionAttempt" }
+    FitnessFunctionTemplate:
+      allOf:
+        - $ref: "#/components/schemas/ResourceRecord"
+        - type: object
+          description: A tribe-published reusable definition (`parentId` is the tribe).
+          properties:
+            kind: { type: string, enum: [fitness-function-template] }
+            status: { type: string, enum: [ACTIVE] }
+            data:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                  description: Template name, unique within the tribe.
+                  example: Resilience baseline
+                description:
+                  type: string
+                  maxLength: 2000
+                  description: When squads should adopt this template.
+                definition:
+                  $ref: "#/components/schemas/FitnessDefinition"
+    FitnessFunctionTemplatePage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/FitnessFunctionTemplate" }
+    TemplateAdoption:
+      allOf:
+        - $ref: "#/components/schemas/ResourceRecord"
+        - type: object
+          description: Record of a squad adopting a template (`parentId` is the template).
+          properties:
+            kind: { type: string, enum: [template-adoption] }
+            status: { type: string, enum: [ACTIVE] }
+            data:
+              type: object
+              required: [squadId]
+              properties:
+                squadId: { $ref: "#/components/schemas/Id" }
+                targetIds:
+                  type: array
+                  items: { $ref: "#/components/schemas/Id" }
+                  description: Scope override for the created draft.
+                reason:
+                  type: string
+                  maxLength: 2000
+                  description: Why the squad adopted the template.
+    ResourceRecordPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/ResourceRecord" }
+    Comparison:
+      type: string
+      enum: [GREATER_THAN, GREATER_THAN_OR_EQUAL, LESS_THAN, LESS_THAN_OR_EQUAL, EQUAL, NOT_EQUAL]
+      description: |
+        Comparison used to evaluate a measurement against a threshold. A criterion fails
+        (or warns) when `value <comparison> threshold` holds.
+      example: GREATER_THAN
+    Criterion:
+      type: object
+      required: [key, unit, failureComparison, failureValue]
+      description: |
+        One acceptance criterion of a fitness definition. Evaluation compares each
+        criterion's measurement against the warning threshold first and the failure
+        threshold second; a single criterion can therefore yield `WARN` before `FAIL`.
+      properties:
+        key:
+          type: string
+          pattern: "^[a-z][a-z0-9_]{0,62}$"
+          description: |
+            Stable, machine-readable criterion key. Measurements and pull queries
+            reference criteria by this key; it must be unique within a definition.
+          example: request_failure_rate
+        description:
+          type: string
+          maxLength: 2000
+          description: Human explanation of what the criterion protects.
+          example: Customer request failure rate during loss of one instance
+        unit:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: Explicit measurement unit (e.g. `PERCENT`, `SECONDS`, `REQUESTS_PER_SECOND`). Submitted measurements must use the same unit.
+          example: PERCENT
+        warningComparison: { $ref: "#/components/schemas/Comparison" }
+        warningValue:
+          type: number
+          description: Threshold at which the criterion warns. Optional; omit to skip the warning band.
+          example: 0.5
+        failureComparison: { $ref: "#/components/schemas/Comparison" }
+        failureValue:
+          type: number
+          description: Threshold at which the criterion fails.
+          example: 1.0
+        required:
+          type: boolean
+          default: false
+          description: |
+            Whether a measurement for this criterion must be present in every submission.
+            When false, a missing measurement is treated as not applicable instead of
+            failing. Omitting the field is equivalent to false; set it explicitly to
+            true for mandatory criteria.
+    MetricQuery:
+      type: object
+      required: [criterionKey, expression, mode, reduction, seriesPolicy, unit]
+      description: |
+        One provider query of a pull acquisition, bound to a criterion key. `INSTANT`
+        queries evaluate a single point in time; `RANGE` queries evaluate a window and
+        reduce it with `reduction`.
+      properties:
+        criterionKey:
+          type: string
+          description: Criterion this query feeds. Every criterion of a pull definition needs a query.
+          example: request_failure_rate
+        expression:
+          type: string
+          minLength: 1
+          maxLength: 10000
+          description: Provider query expression (PromQL for Prometheus sources).
+          example: "100 * sum(rate(http_requests_total{service=\"checkout\"}[5m]))"
+        mode:
+          type: string
+          enum: [INSTANT, RANGE]
+          description: Query execution mode.
+          example: INSTANT
+        lookbackSeconds:
+          type: integer
+          minimum: 1
+          maximum: 86400
+          description: "RANGE only: window length ending at collection time."
+          example: 3600
+        stepSeconds:
+          type: integer
+          minimum: 1
+          description: "RANGE only: evaluation step within the window."
+          example: 60
+        reduction:
+          type: string
+          enum: [LAST, MIN, MAX, AVERAGE, SUM, COUNT]
+          description: How multiple samples (RANGE) or series are reduced to one value.
+          example: LAST
+        seriesPolicy:
+          type: string
+          enum: [REQUIRE_SINGLE_SERIES, REDUCE_ACROSS_SERIES, ERROR_ON_MULTIPLE_SERIES]
+          description: |
+            Handling of multi-series results: require exactly one series, reduce across
+            series, or refuse ambiguous results.
+          example: REQUIRE_SINGLE_SERIES
+        unit:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: Unit of the query result; must match the bound criterion's unit.
+          example: PERCENT
+    Acquisition:
+      oneOf:
+        - $ref: "#/components/schemas/PushAcquisition"
+        - $ref: "#/components/schemas/PullAcquisition"
+      discriminator:
+        propertyName: mode
+        mapping:
+          PUSH: "#/components/schemas/PushAcquisition"
+          PULL: "#/components/schemas/PullAcquisition"
+      description: How measurements are acquired for the definition, discriminated by `mode`.
+    PushAcquisition:
+      type: object
+      required: [mode, producerId, maximumObservationAgeSeconds]
+      description: Pipelines push measurements through the API on every run.
+      properties:
+        mode: { type: string, enum: [PUSH] }
+        producerId:
+          allOf: [{ $ref: "#/components/schemas/Id" }]
+          description: The only producer allowed to submit against this definition.
+        maximumObservationAgeSeconds:
+          type: integer
+          minimum: 1
+          description: Submissions older than this (relative to server time) are rejected as stale.
+          example: 3600
+    PullAcquisition:
+      type: object
+      required: [mode, sourceId, trigger, timeoutSeconds, queries]
+      description: Polaris collects measurements by querying a registered source.
+      properties:
+        mode: { type: string, enum: [PULL] }
+        sourceId:
+          allOf: [{ $ref: "#/components/schemas/Id" }]
+          description: Measurement source to query; must be `ACTIVE` for collection to run.
+        trigger:
+          type: string
+          enum: [SCHEDULED, ON_DEMAND]
+          description: "`SCHEDULED` runs on `intervalSeconds`; `ON_DEMAND` runs only when requested."
+        intervalSeconds:
+          type: integer
+          minimum: 60
+          description: "SCHEDULED only: collection interval; the minimum of 60 seconds protects providers."
+          example: 300
+        timeoutSeconds:
+          type: integer
+          minimum: 1
+          maximum: 30
+          description: Per-query timeout bounding provider latency.
+          example: 10
+        queries:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/MetricQuery" }
+          description: Queries to execute; together they must cover every criterion key.
+    FitnessDefinition:
+      type: object
+      required: [name, purpose, objective, targetIds, criteria, acquisition, freshnessSeconds, enforcement]
+      description: |
+        A complete fitness-function definition. Used to create functions (as draft
+        version 1), append new draft versions, and replace existing drafts. Once a
+        version is activated its definition is immutable; evolve it through a new
+        version with `changeRationale`.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Short, stable name of the fitness function.
+          example: Checkout remains available during one instance loss
+        purpose:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Why this characteristic matters to the business.
+          example: Protect completed purchases and revenue during routine infrastructure failures
+        objective:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: The observable state that counts as fit.
+          example: Customers can complete checkout while one Checkout API instance is unavailable.
+        characteristic:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: |
+            Architectural characteristic being protected (e.g. from ISO/IEC 25010:
+            RELIABILITY, PERFORMANCE, MAINTAINABILITY, SECURITY).
+          example: RELIABILITY
+        targetIds:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/Id" }
+          description: "Scope: the targets this function protects. All must be owned by the owning squad."
+        criteria:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/Criterion" }
+          description: Acceptance criteria evaluated on every measurement set.
+        acquisition: { $ref: "#/components/schemas/Acquisition" }
+        freshnessSeconds:
+          type: integer
+          minimum: 1
+          description: |
+            How long an evaluation stays fresh. An evaluation's `validUntil` equals its
+            `observedAt` plus this value; beyond it the function is stale.
+          example: 2592000
+        enforcement:
+          type: string
+          enum: [OBSERVE, WARN, BLOCK]
+          description: |
+            Response when the function is not satisfied: `OBSERVE` records only, `WARN`
+            demands attention (`ATTENTION_REQUIRED` disposition), `BLOCK` gates delivery
+            (`BLOCKED` disposition, subject to approved waivers).
+          example: BLOCK
+        changeRationale:
+          type: string
+          maxLength: 2000
+          description: Why the definition changed; recorded with new and updated versions.
+          example: Peak traffic has doubled and the recovery objective is stricter
+    FitnessVersion:
+      type: object
+      required: [number, state, definition, createdAt]
+      description: One immutable-on-activation version of the definition.
+      properties:
+        number:
+          type: integer
+          minimum: 1
+          description: Version number, assigned in creation order.
+          example: 2
+        state:
+          type: string
+          enum: [DRAFT, ACTIVE, SUPERSEDED]
+          description: Exactly one version of a function is `ACTIVE` (after first activation).
+        definition: { $ref: "#/components/schemas/FitnessDefinition" }
+        createdAt:
+          type: string
+          format: date-time
+          description: When this version was created.
+        activatedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When this version was activated; absent while still a draft.
+    FitnessFunction:
+      type: object
+      required: [id, ownerSquadId, lifecycle, revision, versions]
+      description: |
+        The fitness-function aggregate. Use `revision` (also returned as `ETag`) in
+        `If-Match` for version mutations.
+      properties:
+        id: { $ref: "#/components/schemas/Id" }
+        ownerSquadId:
+          allOf: [{ $ref: "#/components/schemas/Id" }]
+          description: Squad that owns the function; ownership never transfers to the tribe.
+        lifecycle:
+          type: string
+          enum: [DRAFT, ACTIVE, RETIRED]
+          description: Aggregate lifecycle. `ACTIVE` once a version is activated; `RETIRED` is terminal.
+        revision:
+          type: integer
+          minimum: 1
+          description: Aggregate revision for optimistic concurrency; increments on every change.
+          example: 4
+        activeVersion:
+          type: integer
+          minimum: 1
+          description: Number of the active version; absent before the first activation.
+          example: 2
+        versions:
+          type: array
+          items: { $ref: "#/components/schemas/FitnessVersion" }
+          description: Full version history in creation order.
+    FitnessFunctionPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/FitnessFunction" }
+    FitnessVersionPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/FitnessVersion" }
+    FitnessVersionValidationResult:
+      type: object
+      required: [valid, version]
+      description: Verdict of a definition validation.
+      properties:
+        valid:
+          type: boolean
+          description: True when the version passes validation. An invalid version yields `422` instead.
+        version:
+          type: integer
+          minimum: 1
+          description: Validated version number.
+    Measurement:
+      type: object
+      required: [criterionKey, value, unit]
+      description: One measured value bound to a criterion key.
+      properties:
+        criterionKey:
+          type: string
+          description: Criterion this measurement feeds; duplicates within a submission are rejected.
+          example: request_failure_rate
+        value:
+          type: number
+          description: Measured value; must be finite (NaN and infinity are rejected).
+          example: 0.8
+        unit:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: Measurement unit; must match the criterion's declared unit.
+          example: PERCENT
+        observedAt:
+          type: string
+          format: date-time
+          description: Set by the server from the submission's `observedAt` when omitted.
+    MeasurementSubmission:
+      type: object
+      required: [fitnessFunctionVersion, producerId, externalRunId, observedAt, measurements]
+      description: |
+        A pipeline run's measurement set. Deduplicated by
+        `producerId` + `externalRunId`: redeliveries return the original evaluation with
+        `replayed: true`.
+      properties:
+        fitnessFunctionVersion:
+          type: integer
+          minimum: 1
+          description: Version the measurements were produced against; it must be the active version.
+          example: 2
+        producerId: { $ref: "#/components/schemas/Id" }
+        externalRunId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Producer-scoped run identifier (e.g. pipeline execution id); the idempotency natural key.
+          example: pipeline-2026-08-22-run-417
+        evaluationRequestId:
+          allOf: [{ $ref: "#/components/schemas/Id" }]
+          description: Evaluation request this submission fulfills, when applicable.
+        observedAt:
+          type: string
+          format: date-time
+          description: When the measurements were taken; must not be in the future and must be within the definition's maximum observation age.
+          example: "2026-08-22T09:15:00Z"
+        measurements:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/Measurement" }
+          description: Measured values, one per criterion (required criteria must be present).
+        evidence:
+          type: array
+          items: { type: object, additionalProperties: true }
+          description: Arbitrary evidence documents retained with the submission (links, logs, reports).
+    MeasurementBatchRequest:
+      type: object
+      required: [items]
+      description: Batch of independent submissions.
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          description: Submissions to apply; each is processed and reported independently.
+          items:
+            type: object
+            required: [fitnessFunctionId, submission]
+            properties:
+              fitnessFunctionId: { $ref: "#/components/schemas/Id" }
+              submission: { $ref: "#/components/schemas/MeasurementSubmission" }
+    BatchItemResult:
+      type: object
+      required: [fitnessFunctionId, status]
+      description: Outcome of one batch item.
+      properties:
+        fitnessFunctionId: { $ref: "#/components/schemas/Id" }
+        status:
+          type: integer
+          description: "Per-item HTTP status: `201` created, `404`/`409`/`422`/`500` failure."
+          example: 201
+        replayed:
+          type: boolean
+          description: Present on success; true when a prior evaluation was returned.
+        evaluation:
+          allOf: [{ $ref: "#/components/schemas/Evaluation" }]
+          description: Present on success.
+        error:
+          type: string
+          description: Present on failure; human-readable failure reason.
+    BatchResultPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/BatchItemResult" }
+    CriterionResult:
+      type: object
+      required: [criterionKey, value, unit, outcome]
+      description: Evaluation verdict for one criterion.
+      properties:
+        criterionKey:
+          type: string
+          description: Evaluated criterion key.
+          example: request_failure_rate
+        value:
+          type: number
+          description: Measured value the verdict is based on.
+          example: 0.8
+        unit:
+          type: string
+          description: Unit of the measured value.
+          example: PERCENT
+        outcome:
+          type: string
+          enum: [PASS, WARN, FAIL]
+          description: Criterion-level verdict.
+          example: WARN
+    Evaluation:
+      type: object
+      required: [evaluationId, fitnessFunctionId, fitnessFunctionVersion, acquisitionMode, originId, outcome, disposition, observedAt, validUntil, criterionResults, data]
+      description: |
+        Immutable evaluation result. Recorded once per accepted submission or completed
+        collection; never modified afterwards.
+      properties:
+        evaluationId: { $ref: "#/components/schemas/Id" }
+        fitnessFunctionId: { $ref: "#/components/schemas/Id" }
+        fitnessFunctionVersion:
+          type: integer
+          minimum: 1
+          description: Active version whose definition produced this evaluation.
+          example: 2
+        acquisitionMode:
+          type: string
+          enum: [PUSH, PULL]
+          description: How the measurements were acquired.
+        originId:
+          allOf: [{ $ref: "#/components/schemas/Id" }]
+          description: Submission or collection-attempt record this evaluation originated from.
+        outcome:
+          type: string
+          enum: [PASS, WARN, FAIL, ERROR, NOT_APPLICABLE]
+          description: |
+            Overall outcome. `ERROR` means evaluation could not complete (e.g. provider
+            failure); `NOT_APPLICABLE` means no required measurement was applicable.
+            No data never counts as success.
+        disposition:
+          type: string
+          enum: [ACCEPTED, ATTENTION_REQUIRED, BLOCKED, WAIVED]
+          description: |
+            Enforcement decision derived from outcome and enforcement level, honoring
+            approved, unexpired waivers.
+          example: ATTENTION_REQUIRED
+        observedAt:
+          type: string
+          format: date-time
+          description: Observation time of the freshest measurement.
+        validUntil:
+          type: string
+          format: date-time
+          description: 'The observedAt value plus the definition''s freshness; the evaluation is stale after this.'
+        criterionResults:
+          type: array
+          items: { $ref: "#/components/schemas/CriterionResult" }
+          description: Per-criterion verdicts with the values they are based on.
+        data:
+          type: object
+          additionalProperties: true
+          description: "Retained acquisition data: measurements and evidence documents."
+    SubmittedEvaluation:
+      allOf:
+        - $ref: "#/components/schemas/Evaluation"
+        - type: object
+          required: [replayed]
+          properties:
+            replayed:
+              type: boolean
+              description: True when this response is a deduplicated replay of a previously recorded evaluation.
+    EvaluationPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/Evaluation" }
+    QueryValidationResult:
+      type: object
+      required: [valid, executed]
+      description: Result of a query validation against a source.
+      properties:
+        valid:
+          type: boolean
+          description: True when the query passes static validation.
+        executed:
+          type: boolean
+          description: "Whether a sample execution was performed (`executeSample: true`)."
+        sampleValue:
+          type: number
+          description: Present when executed; the sample value the provider returned.
+          example: 0.42
+        evidence:
+          type: object
+          additionalProperties: true
+          description: Present when executed; provider evidence for the sample run.
+    FitnessOverview:
+      type: object
+      required: [scope, scopeId, generatedAt, status]
+      description: |
+        Aggregated fitness overview for a squad or tribe. Computed from retained
+        evaluations; deliberately avoids a single universal score.
+      properties:
+        scope:
+          type: string
+          enum: [squad, tribe]
+          description: Aggregation scope.
+        scopeId: { $ref: "#/components/schemas/Id" }
+        generatedAt:
+          type: string
+          format: date-time
+          description: When the overview was generated.
+        status:
+          type: string
+          enum: [AVAILABLE]
+          description: Overview availability.
+    Event:
+      type: object
+      required: [id, type, version, aggregateType, aggregateId, occurredAt, actor, correlationId, payload]
+      description: |
+        A domain or delivery event published through the transactional outbox. Events are
+        delivered in `sequence` order; consumers acknowledge them per `consumerId`.
+      properties:
+        id: { $ref: "#/components/schemas/Id" }
+        type:
+          type: string
+          description: Event type, e.g. `FitnessFunctionVersionActivated`, `EvaluationRecorded`.
+          example: EvaluationRecorded
+        version:
+          type: integer
+          description: Event schema version.
+          example: 1
+        aggregateType:
+          type: string
+          description: Aggregate the event refers to (e.g. `fitness-function`, `evaluation`).
+          example: evaluation
+        aggregateId: { $ref: "#/components/schemas/Id" }
+        occurredAt:
+          type: string
+          format: date-time
+          description: Business time of the event.
+        actor:
+          type: string
+          description: Initiator; `anonymous` for all v1 HTTP-originated events, `system` for worker activity.
+          example: anonymous
+        correlationId:
+          type: string
+          description: Correlates related events across the processing chain.
+        payload:
+          type: object
+          additionalProperties: true
+          description: Event-specific data.
+    EventPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/Event" }
+    EventAcknowledgement:
+      type: object
+      required: [consumerId, eventIds]
+      description: Confirmation of acknowledged events for one consumer.
+      properties:
+        consumerId:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Consumer that processed the events.
+        eventIds:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/Id" }
+          description: Acknowledged event identifiers.
+  requestBodies:
+    CreateTribeRequest:
+      required: true
+      description: New tribe attributes.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [name]
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+                minLength: 1
+                maxLength: 200
+                description: Tribe name.
+                example: Commerce
+              description:
+                type: string
+                maxLength: 2000
+                description: Tribe responsibility.
+                example: Builds customer purchasing and order capabilities
+    ArchiveRequest:
+      required: false
+      description: Reason for the archival; recorded for audit purposes.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            properties:
+              reason:
+                type: string
+                maxLength: 2000
+                description: Why the tribe is being archived.
+                example: Commerce capabilities moved to a new operating model
+    CreateSquadRequest:
+      required: true
+      description: New squad attributes.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [name]
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+                minLength: 1
+                maxLength: 200
+                description: Squad name.
+                example: Checkout
+              mission:
+                type: string
+                maxLength: 2000
+                description: Squad mission.
+                example: Enable customers to complete purchases reliably
+    SquadTransferRequest:
+      required: true
+      description: Transfer decision.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [tribeId]
+            additionalProperties: false
+            properties:
+              tribeId:
+                allOf: [{ $ref: "#/components/schemas/Id" }]
+                description: Destination tribe. The squad keeps ownership of everything it owns.
+              reason:
+                type: string
+                maxLength: 2000
+                description: Why the squad is moving.
+                example: Operating model change
+    CreateFitnessTargetRequest:
+      required: true
+      description: New target attributes.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [name]
+            properties:
+              name:
+                type: string
+                minLength: 1
+                maxLength: 200
+                description: Target name.
+                example: Checkout API
+              description:
+                type: string
+                maxLength: 2000
+                description: What the target does.
+                example: Accepts and confirms customer purchase requests
+              kind:
+                type: string
+                maxLength: 50
+                description: System category (e.g. SERVICE, DATABASE, QUEUE).
+                example: SERVICE
+              criticality:
+                type: string
+                maxLength: 50
+                description: Business criticality label.
+                example: CRITICAL
+              externalReference:
+                type: object
+                additionalProperties: true
+                description: External catalog reference.
+                example: { catalog: enterprise-service-catalog, id: checkout-api }
+              businessContacts:
+                type: array
+                items: { type: string }
+                description: Business contact references.
+                example: ["person:8c83"]
+              technicalContacts:
+                type: array
+                items: { type: string }
+                description: Technical contact references.
+                example: ["group:checkout-on-call"]
+    FitnessTargetLifecycleRequest:
+      required: true
+      description: Target lifecycle transition.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status]
+            additionalProperties: false
+            properties:
+              status:
+                type: string
+                enum: [ACTIVE, DEPRECATED, RETIRED]
+                description: Target lifecycle after the transition.
+                example: DEPRECATED
+              reason:
+                type: string
+                maxLength: 2000
+                description: Why the lifecycle is changing.
+                example: Replacement service is available
+    CreateMeasurementSourceRequest:
+      required: true
+      description: New measurement source attributes.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [name, providerType, baseUrl]
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+                minLength: 1
+                maxLength: 200
+                description: Source name.
+                example: Commerce production metrics
+              providerType:
+                type: string
+                enum: [PROMETHEUS]
+                description: Provider adapter to use; discover options via `GET /measurement-provider-types`.
+                example: PROMETHEUS
+              baseUrl:
+                type: string
+                format: uri
+                minLength: 1
+                maxLength: 2000
+                description: Provider base URL (no credentials; none are stored or returned).
+                example: https://prometheus.metrics.example.net
+              description:
+                type: string
+                maxLength: 2000
+                description: Optional notes about the source.
+    CreateMeasurementProducerRequest:
+      required: true
+      description: New measurement producer attributes.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [name]
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+                minLength: 1
+                maxLength: 200
+                description: Producer name; referenced by push definitions.
+                example: checkout-pipeline
+              description:
+                type: string
+                maxLength: 2000
+                description: What the producer measures.
+    SourceStateChangeRequest:
+      required: false
+      description: Rationale for the state change; recorded for audit purposes.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            properties:
+              reason:
+                type: string
+                maxLength: 2000
+                description: Why the state is changing (e.g. which connection check was reviewed).
+                example: Connectivity and read-only access verified
+    QueryValidationRequest:
+      required: true
+      description: Query to validate.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [query]
+            additionalProperties: false
+            properties:
+              query: { $ref: "#/components/schemas/MetricQuery" }
+              executeSample:
+                type: boolean
+                default: false
+                description: Execute the query once against the provider and return the sample value.
+    EmptyRequest:
+      required: true
+      description: The request body carries no fields in this version; send `{}`.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            example: {}
+    FitnessDefinition:
+      required: true
+      description: Complete fitness-function definition.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/FitnessDefinition" }
+    MeasurementSubmission:
+      required: true
+      description: Measurement submission for one pipeline run.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MeasurementSubmission" }
+    MeasurementBatchRequest:
+      required: true
+      description: Batch of independent measurement submissions.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MeasurementBatchRequest" }
+    CreateWaiverRequest:
+      required: true
+      description: Waiver proposal.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [reason]
+            additionalProperties: false
+            properties:
+              reason:
+                type: string
+                minLength: 1
+                maxLength: 2000
+                description: Why the exception is temporarily acceptable.
+                example: Infrastructure replacement temporarily increases recovery time
+              criterionKeys:
+                type: array
+                items: { type: string }
+                description: Criteria the waiver covers; omit for all criteria.
+                example: [recovery_time]
+              risk:
+                type: string
+                maxLength: 2000
+                description: Risk being accepted.
+                example: A single-zone failure can delay checkout recovery by up to two minutes
+              compensatingAction:
+                type: string
+                maxLength: 2000
+                description: Mitigation in place during the waiver window.
+                example: Route traffic to the secondary region and keep the release rollback ready
+              startsAt:
+                type: string
+                format: date-time
+                description: Waiver window start; defaults to approval time when omitted.
+                example: "2026-07-25T17:00:00Z"
+              expiresAt:
+                type: string
+                format: date-time
+                description: Waiver window end; must be after `startsAt`.
+                example: "2026-08-01T17:00:00Z"
+    WaiverDecisionRequest:
+      required: false
+      description: Decision rationale; recorded for audit purposes.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            properties:
+              reason:
+                type: string
+                maxLength: 2000
+                description: Why the waiver is approved, rejected, or revoked.
+                example: Risk and compensating action accepted for the stated period
+    CreateTemplateRequest:
+      required: true
+      description: New tribe template.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [name]
+            properties:
+              name:
+                type: string
+                minLength: 1
+                maxLength: 200
+                description: Template name; unique within the tribe.
+                example: Resilience baseline
+              description:
+                type: string
+                maxLength: 2000
+                description: When squads should adopt this template.
+              definition:
+                $ref: "#/components/schemas/FitnessDefinition"
+    AdoptTemplateRequest:
+      required: true
+      description: Template adoption request.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [squadId]
+            additionalProperties: false
+            properties:
+              squadId:
+                allOf: [{ $ref: "#/components/schemas/Id" }]
+                description: Squad that will own the created draft.
+              targetIds:
+                type: array
+                items: { $ref: "#/components/schemas/Id" }
+                description: Optional scope override for the created draft.
+              reason:
+                type: string
+                maxLength: 2000
+                description: Why the squad adopted the template.
+                example: Use the tribe resilience starting point
+    EventAcknowledgementRequest:
+      required: true
+      description: Events to acknowledge for one consumer.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [consumerId, eventIds]
+            additionalProperties: false
+            properties:
+              consumerId:
+                type: string
+                minLength: 1
+                maxLength: 100
+                description: Consumer that processed the events.
+                example: delivery-webhook-relay
+              eventIds:
+                type: array
+                minItems: 1
+                maxItems: 500
+                items: { $ref: "#/components/schemas/Id" }
+                description: Processed event identifiers.
+  responses:
+    Health:
+      description: The probe succeeded.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Health" }
+          example: { status: ok }
+    Unauthorized:
+      description: |
+        Authentication failed or was not attempted (`code` is `UNAUTHENTICATED`). Business
+        endpoints require a Google OIDC bearer token; measurement submissions require the
+        `X-API-Key` ingest secret. The response carries `WWW-Authenticate: Bearer`.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: https://polaris.local/problems/unauthorized
+            title: Unauthorized
+            status: 401
+            code: UNAUTHENTICATED
+            detail: invalid bearer token
+            correlationId: corr_01K0RA
+    BadRequest:
+      description: |
+        The request body is not decodable JSON, contains unknown fields, or a required
+        query parameter is missing (`code` is `INVALID_JSON` or `INVALID_REQUEST`).
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: https://polaris.local/problems/bad-request
+            title: Bad Request
+            status: 400
+            code: INVALID_JSON
+            detail: "json: unknown field \"naame\""
+            correlationId: corr_01K0RA
+    NotFound:
+      description: The addressed resource (or a parent scope referenced by the path) does not exist.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: https://polaris.local/problems/not-found
+            title: Not Found
+            status: 404
+            code: RESOURCE_NOT_FOUND
+            detail: resource not found
+            correlationId: corr_01K0RA
+    Conflict:
+      description: |
+        The request conflicts with current state: unique-constraint violation, illegal
+        lifecycle transition, or a stale `If-Match` revision.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: https://polaris.local/problems/conflict
+            title: Conflict
+            status: 409
+            code: RESOURCE_CONFLICT
+            detail: "aggregate revision mismatch"
+            correlationId: corr_01K0RA
+    UnprocessableEntity:
+      description: |
+        The body is well formed but violates domain rules (missing required fields,
+        invalid thresholds, unauthorized producer, stale observation, failed connection
+        check, or an invalid provider query).
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: https://polaris.local/problems/unprocessable-entity
+            title: Unprocessable Entity
+            status: 422
+            code: INVALID_REQUEST
+            detail: producer is not declared by the active definition
+            correlationId: corr_01K0RA
+    InternalError:
+      description: Unexpected server-side failure, including unreachable providers during collection.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: https://polaris.local/problems/internal-server-error
+            title: Internal Server Error
+            status: 500
+            code: INTERNAL_ERROR
+            detail: provider query failed
+            correlationId: corr_01K0RA

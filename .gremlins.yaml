@@ -1,0 +1,33 @@
+# Mutation testing configuration for go-gremlins.
+# Run with: make mutation
+silent: false
+unleash:
+  integration: false
+  # The per-mutant budget is clean-test-time * coefficient. The clean run must
+  # be uncached (make mutation clears the test cache first) or the measured
+  # baseline is ~100ms while every mutant needs a full test-binary recompile.
+  timeout-coefficient: 10
+  # Fail when the mutation efficacy (killed / applicable mutants) drops below
+  # this percentage. Gremlins fails on efficacy <= threshold, so 70 enforces a
+  # real floor above 70. Calibrate upward as the suite improves.
+  threshold:
+    efficacy: 70
+    mutant-coverage: 0
+  workers: 0
+mutants:
+  arithmetic-base:
+    enabled: true
+  conditionals-boundary:
+    enabled: true
+  conditionals-negation:
+    enabled: true
+  increment-decrement:
+    enabled: true
+  invert-assignments:
+    enabled: false
+  invert-bitwise:
+    enabled: false
+  invert-negatives:
+    enabled: true
+  loop-continue:
+    enabled: false
