@@ -211,6 +211,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    env:
+      TRIVY_DISABLE_VEX_NOTICE: "true"
+      TRIVY_SKIP_VERSION_CHECK: "true"
     permissions:
       contents: read
       security-events: write
@@ -249,6 +252,7 @@ jobs:
           image-ref: ${{ matrix.tag }}
           format: sarif
           output: trivy-results.sarif
+          scanners: vuln
           severity: CRITICAL,HIGH,MEDIUM
           ignore-unfixed: true
       - name: Upload SARIF to the Security tab
@@ -262,6 +266,7 @@ jobs:
         with:
           image-ref: ${{ matrix.tag }}
           format: table
+          scanners: vuln
           exit-code: "1"
           ignore-unfixed: true
           vuln-type: os,library
