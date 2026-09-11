@@ -28,6 +28,9 @@ func skipIfDisabled(t *testing.T) {
 // startPostgres boots an ephemeral PostgreSQL 18 container and returns its DSN.
 func startPostgres(ctx context.Context, t *testing.T) string {
 	t.Helper()
+	if dsn := os.Getenv("POLARIS_TEST_DATABASE_URL"); dsn != "" {
+		return dsn
+	}
 	container, err := postgres.Run(ctx, "postgres:18.4-alpine",
 		postgres.WithDatabase("polaris"),
 		postgres.WithUsername("polaris"),

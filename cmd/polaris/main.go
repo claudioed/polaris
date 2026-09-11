@@ -39,6 +39,7 @@ func main() {
 	address := env("POLARIS_HTTP_ADDRESS", ":8080")
 	issuer := env("POLARIS_OIDC_ISSUER", "https://accounts.google.com")
 	clientID := os.Getenv("POLARIS_OIDC_CLIENT_ID")
+	authorizedEmail := env("POLARIS_AUTHORIZED_EMAIL", "claudioed.oliveira@gmail.com")
 	ingestKey := os.Getenv("POLARIS_INGEST_SECRET_KEY")
 	if clientID == "" {
 		logger.Error("POLARIS_OIDC_CLIENT_ID is required")
@@ -64,7 +65,7 @@ func main() {
 
 	collector := prometheusadapter.New(&http.Client{Timeout: 35 * time.Second}, int64(envInt("POLARIS_PROMETHEUS_MAX_RESPONSE_BYTES", 4<<20)))
 	service := application.NewService(store, ids{}, clock{}, collector)
-	auth, err := httpapi.NewOIDC(startup, issuer, clientID)
+	auth, err := httpapi.NewOIDC(startup, issuer, clientID, authorizedEmail)
 	if err != nil {
 		logger.Error("oidc discovery failed", "error", err, "issuer", issuer)
 		os.Exit(1)
@@ -86,7 +87,7 @@ func main() {
 	defer stop()
 	go runWorker(ctx, logger, service, time.Duration(envInt("POLARIS_WORKER_INTERVAL_SECONDS", 10))*time.Second)
 	go func() {
-		logger.Info("polaris started", "address", address, "authentication", "oidc", "issuer", issuer)
+		logger.Info("polaris started", "address", address, "authentication", "oidc", "issuer", issuer, "authorized_email", authorizedEmail)
 		if listenErr := server.ListenAndServe(); listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
 			logger.Error("http server failed", "error", listenErr)
 			stop()

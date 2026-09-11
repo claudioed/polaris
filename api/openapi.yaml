@@ -2,7 +2,6 @@ openapi: 3.0.3
 info:
   title: Polaris API
   version: 1.0.0
-  summary: Squad-owned architectural fitness-function control plane and measurement receiver.
   description: |
     Polaris enables engineering squads to define, operate, and evolve **architectural fitness
     functions** for the systems they own, and answers five business questions:
@@ -56,6 +55,8 @@ info:
     |--------|--------|---------|
     | 400 | `INVALID_JSON` | Request body is not decodable JSON or contains unknown fields. |
     | 400 | `INVALID_REQUEST` | A required query parameter is missing. |
+    | 401 | `UNAUTHENTICATED` | Authentication is missing or invalid. |
+    | 403 | `FORBIDDEN` | The authenticated Google email is not authorized. |
     | 404 | `RESOURCE_NOT_FOUND` | The addressed resource (or parent scope) does not exist. |
     | 409 | `RESOURCE_CONFLICT` | Unique-constraint, lifecycle, or optimistic-concurrency (`If-Match`) conflict. |
     | 422 | `INVALID_REQUEST` | The body is well formed but violates domain validation rules. |
@@ -63,17 +64,17 @@ info:
 
     ### Authentication
 
-    Version 1 intentionally runs **without authentication**. No route requires credentials
-    and every HTTP-originated change is audited under the actor `anonymous`. Do not expose
-    this version to an untrusted network; put network-level controls in front of it until an
-    application authentication mode is introduced.
+    Business routes require a Google OpenID Connect ID token. After verifying the token,
+    Polaris authorizes only the verified Google email configured by
+    `POLARIS_AUTHORIZED_EMAIL` (default `claudioed.oliveira@gmail.com`). Measurement ingest
+    routes use the separately configured `X-API-Key`; health probes remain anonymous.
   contact:
     name: Polaris maintainers
   license:
     name: proprietary
-  externalDocs:
-    url: https://github.com/claudioed/polaris/blob/main/polaris.md
-    description: Polaris domain and REST API specification (polaris.md)
+externalDocs:
+  url: https://github.com/claudioed/polaris/blob/main/polaris.md
+  description: Polaris domain and REST API specification (polaris.md)
 servers:
   - url: /api/v1
     description: Version 1 API served by the Polaris control plane. A development Prometheus
@@ -1289,7 +1290,8 @@ components:
         Google OpenID Connect. Clients obtain an ID token (Authorization Code with PKCE or
         Google Identity Services) and send it as `Authorization: Bearer <id_token>`.
         Polaris verifies issuer, audience, expiry, and signature against Google's published
-        JWKS. Applies to every business endpoint except measurement submissions and health.
+        JWKS, then allows only the configured verified email. Applies to every business
+        endpoint except measurement submissions and health.
     ingestApiKey:
       type: apiKey
       in: header
@@ -1480,7 +1482,7 @@ components:
           example: /api/v1/fitness-functions/0198.../versions
         code:
           type: string
-          enum: [INVALID_JSON, INVALID_REQUEST, RESOURCE_NOT_FOUND, RESOURCE_CONFLICT, INTERNAL_ERROR]
+          enum: [UNAUTHENTICATED, FORBIDDEN, INVALID_JSON, INVALID_REQUEST, RESOURCE_NOT_FOUND, RESOURCE_CONFLICT, INTERNAL_ERROR]
           description: Stable machine-readable error code.
           example: RESOURCE_CONFLICT
         correlationId:

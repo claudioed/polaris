@@ -35,7 +35,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
 
-  if (response.status === 401) {
+  if (response.status === 401 || response.status === 403) {
     signOut();
   }
 

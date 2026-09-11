@@ -29,8 +29,9 @@ import (
 )
 
 const (
-	clientID  = "polaris-web"
-	ingestKey = "integration-ingest-secret"
+	clientID        = "polaris-web"
+	authorizedEmail = "engineer-1@example.com"
+	ingestKey       = "integration-ingest-secret"
 )
 
 func skipIfDisabled(t *testing.T) {
@@ -136,7 +137,7 @@ func newStack(t *testing.T) stack {
 	t.Cleanup(store.Close)
 
 	issuer := oidctest.New(t)
-	auth, err := httpapi.NewOIDC(ctx, issuer.Server.URL, clientID)
+	auth, err := httpapi.NewOIDC(ctx, issuer.Server.URL, clientID, authorizedEmail)
 	if err != nil {
 		t.Fatalf("oidc discovery against fake issuer: %v", err)
 	}

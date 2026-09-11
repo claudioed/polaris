@@ -20,7 +20,7 @@ PostgreSQL 18.4 is the system of record. Provider-specific behavior stays behind
 
 ## Authentication
 
-All business endpoints require a Google OpenID Connect ID token sent as `Authorization: Bearer <id_token>`. Polaris verifies the token's issuer, audience, expiry, and signature against Google's published JWKS at startup and per request. The two ingest endpoints — `POST /fitness-functions/{fitnessFunctionId}/measurement-submissions` and `POST /measurement-submission-batches` — are the exception: they authenticate with a shared secret via the `X-API-Key` header (compared in constant time) so measurement producers do not need Google identities. Health probes (`/api/v1/health/*`) and the published contract (`/openapi.yaml`) stay anonymous.
+All business endpoints require a Google OpenID Connect ID token sent as `Authorization: Bearer <id_token>`. Polaris verifies the token's issuer, audience, expiry, and signature against Google's published JWKS at startup and per request, then authorizes only the verified email configured by `POLARIS_AUTHORIZED_EMAIL` (default `claudioed.oliveira@gmail.com`). Other valid Google accounts receive `403 Forbidden`. The two ingest endpoints — `POST /fitness-functions/{fitnessFunctionId}/measurement-submissions` and `POST /measurement-submission-batches` — are the exception: they authenticate with a shared secret via the `X-API-Key` header (compared in constant time) so measurement producers do not need Google identities. Health probes (`/api/v1/health/*`) and the published contract (`/openapi.yaml`) stay anonymous.
 
 Authentication is always enforced. The process refuses to start without `POLARIS_OIDC_CLIENT_ID` and `POLARIS_INGEST_SECRET_KEY`, and it fails fast if OIDC discovery cannot reach the issuer (`POLARIS_OIDC_ISSUER`, default `https://accounts.google.com`).
 
@@ -28,7 +28,8 @@ To create credentials:
 
 1. In Google Cloud Console, create an OAuth 2.0 **Web application** client. Add the control tower origin (e.g. `http://localhost:3000` and `http://localhost:5173`) as an authorized JavaScript origin.
 2. Copy the client ID into `.env` as `POLARIS_OIDC_CLIENT_ID` (compose passes the same value to the API and, as `VITE_GOOGLE_CLIENT_ID`, to the control tower build).
-3. Generate a ingest secret, e.g. `openssl rand -base64 32`, and set `POLARIS_INGEST_SECRET_KEY` in `.env`. Distribute it to measurement producers, which must send it as `X-API-Key`.
+3. Set `POLARIS_AUTHORIZED_EMAIL=claudioed.oliveira@gmail.com` to identify the only Google account allowed into the control tower.
+4. Generate an ingest secret, e.g. `openssl rand -base64 32`, and set `POLARIS_INGEST_SECRET_KEY` in `.env`. Distribute it to measurement producers, which must send it as `X-API-Key`.
 
 HTTP-originated audit events use the authenticated principal's subject; worker activity is system initiated. Prometheus sources still support only outbound authentication mode `NONE` in this version.
 
@@ -69,6 +70,12 @@ make web-build
 `make mutation` runs mutation testing (go-gremlins, pinned as a Go tool) over the domain and application packages and fails below the efficacy threshold in [.gremlins.yaml](.gremlins.yaml). The target clears the Go test cache first: gremlins sizes each mutant's time budget from the uncached clean-run duration, and a cached baseline makes every mutant time out spuriously.
 
 Useful environment variables are documented in [.env.example](.env.example).
+
+## Continuous delivery
+
+The GitHub Actions workflow in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) gates pushes and pull requests with Go and web linting, unit coverage, PostgreSQL integration tests, OpenAPI validation and generated-code drift, mutation testing, and vulnerability scans. Pull requests to `main` also scan both container images with Trivy. The full mutation suite runs weekly and on manual dispatch.
+
+After all gates pass on `main`, the workflow publishes signed API and control-tower images to GHCR, generates and attests SBOMs, increments the patch version, and creates a GitHub release. Define the repository variable `POLARIS_OIDC_CLIENT_ID` before the first publish so the Google client ID is embedded in the control-tower build.
 
 For UI development, run the API and then start Vite:
 

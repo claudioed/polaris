@@ -56,4 +56,12 @@ describe("api authentication", () => {
     await expect(getSquadTargets("squad-1")).rejects.toMatchObject({ status: 401 });
     expect(sessionStorage.getItem("polaris.idToken")).toBeNull();
   });
+
+  it("clears the session when the Google account is not authorized", async () => {
+    sessionStorage.setItem("polaris.idToken", fakeToken());
+    vi.stubGlobal("fetch", mockFetch(403, { title: "Forbidden", code: "FORBIDDEN" }));
+
+    await expect(getSquadTargets("squad-1")).rejects.toMatchObject({ status: 403 });
+    expect(sessionStorage.getItem("polaris.idToken")).toBeNull();
+  });
 });

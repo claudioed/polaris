@@ -16,7 +16,7 @@ func Migrate(ctx context.Context, databaseURL string) error {
 		return err
 	}
 	db := stdlib.OpenDB(*config)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if err = db.PingContext(ctx); err != nil {
 		return err
 	}

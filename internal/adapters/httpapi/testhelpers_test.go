@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	testClientID  = "polaris-web"
-	testIngestKey = "ingest-secret-0123456789"
+	testClientID        = "polaris-web"
+	testAuthorizedEmail = "user-1@example.com"
+	testIngestKey       = "ingest-secret-0123456789"
 )
 
 // memStore is a concurrency-safe in-memory application.Store (+ ScheduleStore)
@@ -292,12 +293,6 @@ func (m *memStore) ClaimDueCollections(context.Context, time.Time, int) ([]strin
 	due := m.due
 	m.due = nil
 	return due, m.claimErr
-}
-
-func (m *memStore) eventsSnapshot() []application.Event {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return append([]application.Event(nil), m.events...)
 }
 
 type seqIDs struct{ next int }

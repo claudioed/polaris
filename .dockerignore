@@ -3,6 +3,7 @@
 .vscode
 coverage.out
 bin
+/polaris
 tmp
 web/node_modules
 web/dist
