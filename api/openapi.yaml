@@ -1532,6 +1532,7 @@ components:
       properties:
         items:
           type: array
+          items: {}
           description: Items in creation order, oldest first.
         nextCursor:
           type: string
