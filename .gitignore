@@ -1,4 +1,5 @@
 coverage.out
+.env
 bin/
 .DS_Store
 .idea/
@@ -6,3 +7,7 @@ bin/
 web/node_modules/
 web/dist/
 web/*.tsbuildinfo
+docs-site/node_modules/
+docs-site/build/
+docs-site/.docusaurus/
+docs-site/docs/api/
