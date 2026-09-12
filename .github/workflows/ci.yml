@@ -295,10 +295,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Validate control-tower configuration
         env:
-          VITE_GOOGLE_CLIENT_ID: ${{ vars.POLARIS_OIDC_CLIENT_ID }}
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.POLARIS_OIDC_CLIENT_ID }}
         run: |
           if [ -z "$VITE_GOOGLE_CLIENT_ID" ]; then
-            echo "::error::define the POLARIS_OIDC_CLIENT_ID repository variable before publishing"
+            echo "::error::define the POLARIS_OIDC_CLIENT_ID Actions secret before publishing"
             exit 1
           fi
       - name: Build and publish API
@@ -321,7 +321,7 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: |
-            VITE_GOOGLE_CLIENT_ID=${{ vars.POLARIS_OIDC_CLIENT_ID }}
+            VITE_GOOGLE_CLIENT_ID=${{ secrets.POLARIS_OIDC_CLIENT_ID }}
           tags: |
             ghcr.io/claudioed/polaris-control-tower:latest
             ghcr.io/claudioed/polaris-control-tower:${{ env.SHORT_SHA }}
