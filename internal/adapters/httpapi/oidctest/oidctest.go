@@ -57,11 +57,12 @@ func New(t *testing.T) *Issuer {
 // Claims returns a valid claim set for the given audience and subject.
 func (i *Issuer) Claims(audience, subject string) map[string]any {
 	return map[string]any{
-		"iss":   i.Server.URL,
-		"aud":   audience,
-		"sub":   subject,
-		"email": subject + "@example.com",
-		"exp":   time.Now().Add(time.Hour).Unix(),
+		"iss":            i.Server.URL,
+		"aud":            audience,
+		"sub":            subject,
+		"email":          subject + "@example.com",
+		"email_verified": true,
+		"exp":            time.Now().Add(time.Hour).Unix(),
 	}
 }
 

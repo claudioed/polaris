@@ -28,18 +28,23 @@ func PrincipalFrom(ctx context.Context) (Principal, bool) {
 
 // Authenticator gates API routes behind OpenID Connect (Google) or a shared ingest secret.
 type Authenticator struct {
-	verifier  *oidc.IDTokenVerifier
-	ingestKey string
+	verifier        *oidc.IDTokenVerifier
+	authorizedEmail string
+	ingestKey       string
 }
 
 // NewOIDC connects to the issuer, discovers its keys, and prepares token verification.
-func NewOIDC(ctx context.Context, issuer, clientID string) (*Authenticator, error) {
+func NewOIDC(ctx context.Context, issuer, clientID, authorizedEmail string) (*Authenticator, error) {
+	if strings.TrimSpace(authorizedEmail) == "" {
+		return nil, fmt.Errorf("authorized email is required")
+	}
 	provider, err := oidc.NewProvider(ctx, issuer)
 	if err != nil {
 		return nil, fmt.Errorf("discover oidc issuer %q: %w", issuer, err)
 	}
 	return &Authenticator{
-		verifier: provider.Verifier(&oidc.Config{ClientID: clientID}),
+		verifier:        provider.Verifier(&oidc.Config{ClientID: clientID}),
+		authorizedEmail: strings.TrimSpace(authorizedEmail),
 	}, nil
 }
 
@@ -62,11 +67,16 @@ func (a *Authenticator) RequireOIDC(next http.Handler) http.Handler {
 			return
 		}
 		claims := struct {
-			Sub   string `json:"sub"`
-			Email string `json:"email"`
+			Sub           string `json:"sub"`
+			Email         string `json:"email"`
+			EmailVerified bool   `json:"email_verified"`
 		}{}
 		if err = idToken.Claims(&claims); err != nil || claims.Sub == "" {
 			unauthorized(w, r, "invalid bearer token claims")
+			return
+		}
+		if !claims.EmailVerified || !strings.EqualFold(strings.TrimSpace(claims.Email), a.authorizedEmail) {
+			forbidden(w, r, "Google account is not authorized to access Polaris")
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, Principal{
@@ -110,6 +120,17 @@ func unauthorized(w http.ResponseWriter, r *http.Request, detail string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"type": "https://polaris.local/problems/unauthorized", "title": title,
 		"status": http.StatusUnauthorized, "code": "UNAUTHENTICATED", "detail": detail,
+		"instance": r.URL.Path, "correlationId": middleware.GetReqID(r.Context()),
+	})
+}
+
+func forbidden(w http.ResponseWriter, r *http.Request, detail string) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(http.StatusForbidden)
+	title := http.StatusText(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"type": "https://polaris.local/problems/forbidden", "title": title,
+		"status": http.StatusForbidden, "code": "FORBIDDEN", "detail": detail,
 		"instance": r.URL.Path, "correlationId": middleware.GetReqID(r.Context()),
 	})
 }

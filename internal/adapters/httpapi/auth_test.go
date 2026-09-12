@@ -14,7 +14,7 @@ import (
 func newTestAuth(t *testing.T) (*oidctest.Issuer, *Authenticator) {
 	t.Helper()
 	issuer := oidctest.New(t)
-	auth, err := NewOIDC(context.Background(), issuer.Server.URL, testClientID)
+	auth, err := NewOIDC(context.Background(), issuer.Server.URL, testClientID, testAuthorizedEmail)
 	if err != nil {
 		t.Fatalf("new oidc: %v", err)
 	}
@@ -110,6 +110,35 @@ func TestOIDCRejectsInvalidTokens(t *testing.T) {
 	}
 }
 
+func TestOIDCRejectsUnauthorizedEmail(t *testing.T) {
+	issuer, auth := newTestAuth(t)
+	handler := newTestHandler(auth)
+
+	cases := []struct {
+		name   string
+		claims map[string]any
+	}{
+		{name: "different email", claims: issuer.Claims(testClientID, "someone-else")},
+		{name: "unverified email", claims: issuer.Claims(testClientID, "user-1")},
+	}
+	cases[1].claims["email_verified"] = false
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := doRequest(handler, http.MethodGet, "/api/v1/tribes", issuer.Token(t, tc.claims), "", "")
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("GET /tribes = %d, want 403", rec.Code)
+			}
+			if !strings.Contains(rec.Body.String(), `"code":"FORBIDDEN"`) {
+				t.Fatalf("body = %s, want FORBIDDEN problem code", rec.Body.String())
+			}
+			if got := rec.Header().Get("WWW-Authenticate"); got != "" {
+				t.Fatalf("WWW-Authenticate = %q, want empty for authenticated caller", got)
+			}
+		})
+	}
+}
+
 func TestIngestEndpointsRequireAPIKey(t *testing.T) {
 	issuer, auth := newTestAuth(t)
 	handler := newTestHandler(auth)
@@ -171,8 +200,14 @@ func TestRequireOIDCPopulatesPrincipal(t *testing.T) {
 func TestNewOIDCRejectsUnreachableIssuer(t *testing.T) {
 	server := httptest.NewServer(http.NotFoundHandler())
 	defer server.Close()
-	if _, err := NewOIDC(context.Background(), server.URL, testClientID); err == nil {
+	if _, err := NewOIDC(context.Background(), server.URL, testClientID, testAuthorizedEmail); err == nil {
 		t.Fatal("NewOIDC should fail when discovery is unavailable")
+	}
+}
+
+func TestNewOIDCRequiresAuthorizedEmail(t *testing.T) {
+	if _, err := NewOIDC(context.Background(), "https://issuer.example.com", testClientID, " "); err == nil {
+		t.Fatal("NewOIDC should reject an empty authorized email")
 	}
 }
 

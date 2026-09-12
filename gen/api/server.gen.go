@@ -581,16 +581,20 @@ func (e MetricQuerySeriesPolicy) Valid() bool {
 
 // Defines values for ProblemCode.
 const (
+	FORBIDDEN        ProblemCode = "FORBIDDEN"
 	INTERNALERROR    ProblemCode = "INTERNAL_ERROR"
 	INVALIDJSON      ProblemCode = "INVALID_JSON"
 	INVALIDREQUEST   ProblemCode = "INVALID_REQUEST"
 	RESOURCECONFLICT ProblemCode = "RESOURCE_CONFLICT"
 	RESOURCENOTFOUND ProblemCode = "RESOURCE_NOT_FOUND"
+	UNAUTHENTICATED  ProblemCode = "UNAUTHENTICATED"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
 func (e ProblemCode) Valid() bool {
 	switch e {
+	case FORBIDDEN:
+		return true
 	case INTERNALERROR:
 		return true
 	case INVALIDJSON:
@@ -600,6 +604,8 @@ func (e ProblemCode) Valid() bool {
 	case RESOURCECONFLICT:
 		return true
 	case RESOURCENOTFOUND:
+		return true
+	case UNAUTHENTICATED:
 		return true
 	default:
 		return false

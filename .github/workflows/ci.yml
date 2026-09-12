@@ -1,0 +1,418 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    name: Go lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.1
+          args: --timeout=5m
+
+  test:
+    name: Go build and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build and vet
+        run: |
+          set -euo pipefail
+          go build ./...
+          go vet ./...
+
+      - name: Check formatting
+        run: |
+          set -euo pipefail
+          files=$(gofmt -l .)
+          if [ -n "$files" ]; then
+            echo "::error::the following files are not gofmt'd:"
+            echo "$files"
+            exit 1
+          fi
+
+      - name: Unit tests with race detector
+        run: make test
+
+      - name: Coverage gate
+        run: make coverage
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage
+          path: coverage.out
+
+  web:
+    name: Control tower
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+      - name: Test and lint
+        working-directory: web
+        run: |
+          npm run test
+          npm run lint
+      - name: Type-check and build
+        working-directory: web
+        run: npm run build
+
+  generated-code-drift:
+    name: Generated API drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Regenerate OpenAPI bindings
+        run: make generate
+      - name: Fail if generated bindings changed
+        run: |
+          set -euo pipefail
+          if ! git diff --exit-code -- gen/api/server.gen.go; then
+            echo "::error::gen/api/server.gen.go is out of sync with api/openapi.yaml. Run 'make generate' and commit the result."
+            exit 1
+          fi
+
+  integration:
+    name: PostgreSQL integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    if: github.event_name != 'schedule'
+    services:
+      postgres:
+        image: postgres:18.4-alpine
+        env:
+          POSTGRES_USER: polaris
+          POSTGRES_PASSWORD: polaris
+          POSTGRES_DB: polaris
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U polaris -d polaris"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Integration tests
+        env:
+          POLARIS_TEST_DATABASE_URL: postgres://polaris:polaris@localhost:5432/polaris?sslmode=disable
+        run: go test -tags=integration ./... -race -count=1 -p=1
+
+  mutation-fast:
+    name: Mutation testing (fast)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Mutation testing for the fitness domain
+        run: |
+          go clean -testcache
+          go tool gremlins unleash ./internal/domain/fitness
+
+  mutation:
+    name: Mutation testing (full)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Mutation testing for domain and application layers
+        run: make mutation
+
+  vuln:
+    name: Go vulnerability scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Scan dependencies and standard library
+        run: govulncheck ./...
+
+  api-lint:
+    name: OpenAPI lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - name: Install Spectral
+        run: npm install --global @stoplight/spectral-cli@6.15.0
+      - name: Lint OpenAPI contract
+        run: spectral lint api/openapi.yaml --ruleset .spectral.yaml --fail-severity=error
+
+  trivy-scan:
+    name: Container scan (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    env:
+      TRIVY_DISABLE_VEX_NOTICE: "true"
+      TRIVY_SKIP_VERSION_CHECK: "true"
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: api
+            context: .
+            file: ./Dockerfile
+            tag: polaris:scan
+          - image: control-tower
+            context: ./web
+            file: ./web/Dockerfile
+            tag: polaris-control-tower:scan
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build image locally
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ matrix.tag }}
+          build-args: |
+            VITE_GOOGLE_CLIENT_ID=ci-placeholder.apps.googleusercontent.com
+          cache-from: type=gha,scope=trivy-${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=trivy-${{ matrix.image }}
+      - name: Scan and produce SARIF
+        uses: aquasecurity/trivy-action@v0.36.0
+        if: always()
+        with:
+          image-ref: ${{ matrix.tag }}
+          format: sarif
+          output: trivy-results.sarif
+          scanners: vuln
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+      - name: Upload SARIF to the Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-${{ matrix.image }}
+      - name: Blocking CRITICAL/HIGH scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ matrix.tag }}
+          format: table
+          scanners: vuln
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+  docker-publish:
+    name: Publish signed images
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [lint, test, web, generated-code-drift, integration, mutation-fast, vuln, api-lint]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set image tag
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate control-tower configuration
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.POLARIS_OIDC_CLIENT_ID }}
+        run: |
+          if [ -z "$VITE_GOOGLE_CLIENT_ID" ]; then
+            echo "::error::define the POLARIS_OIDC_CLIENT_ID repository variable before publishing"
+            exit 1
+          fi
+      - name: Build and publish API
+        id: api
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/claudioed/polaris:latest
+            ghcr.io/claudioed/polaris:${{ env.SHORT_SHA }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+      - name: Build and publish control tower
+        id: web
+        uses: docker/build-push-action@v7
+        with:
+          context: ./web
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            VITE_GOOGLE_CLIENT_ID=${{ vars.POLARIS_OIDC_CLIENT_ID }}
+          tags: |
+            ghcr.io/claudioed/polaris-control-tower:latest
+            ghcr.io/claudioed/polaris-control-tower:${{ env.SHORT_SHA }}
+          cache-from: type=gha,scope=control-tower
+          cache-to: type=gha,mode=max,scope=control-tower
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign published images
+        run: |
+          cosign sign --yes ghcr.io/claudioed/polaris@${{ steps.api.outputs.digest }}
+          cosign sign --yes ghcr.io/claudioed/polaris-control-tower@${{ steps.web.outputs.digest }}
+      - name: Generate API SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ghcr.io/claudioed/polaris@${{ steps.api.outputs.digest }}
+          format: spdx-json
+          output-file: polaris-api.spdx.json
+      - name: Generate control-tower SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ghcr.io/claudioed/polaris-control-tower@${{ steps.web.outputs.digest }}
+          format: spdx-json
+          output-file: polaris-control-tower.spdx.json
+      - name: Attest SBOMs
+        run: |
+          cosign attest --yes --predicate polaris-api.spdx.json --type spdxjson \
+            ghcr.io/claudioed/polaris@${{ steps.api.outputs.digest }}
+          cosign attest --yes --predicate polaris-control-tower.spdx.json --type spdxjson \
+            ghcr.io/claudioed/polaris-control-tower@${{ steps.web.outputs.digest }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: sboms
+          path: "*.spdx.json"
+          retention-days: 90
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [docker-publish]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Compute next patch version
+        id: version
+        run: |
+          set -euo pipefail
+          git fetch origin --tags --force
+          latest=$(git tag -l 'v*.*.*' | sort -V | tail -n1)
+          if [ -z "$latest" ]; then
+            new="v0.1.0"
+          else
+            IFS='.' read -r major minor patch <<< "${latest#v}"
+            patch=$((patch + 1))
+            new="v${major}.${minor}.${patch}"
+          fi
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+      - name: Set image tag
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Add release tags to published images
+        run: |
+          docker buildx imagetools create \
+            -t ghcr.io/claudioed/polaris:${{ steps.version.outputs.version }} \
+            ghcr.io/claudioed/polaris:${{ env.SHORT_SHA }}
+          docker buildx imagetools create \
+            -t ghcr.io/claudioed/polaris-control-tower:${{ steps.version.outputs.version }} \
+            ghcr.io/claudioed/polaris-control-tower:${{ env.SHORT_SHA }}
+      - name: Create and push git tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag ${{ steps.version.outputs.version }}
+          git push origin ${{ steps.version.outputs.version }}
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          body: |
+            API: `ghcr.io/claudioed/polaris:${{ steps.version.outputs.version }}`
+
+            Control tower: `ghcr.io/claudioed/polaris-control-tower:${{ steps.version.outputs.version }}`

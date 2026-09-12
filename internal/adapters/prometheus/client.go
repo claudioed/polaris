@@ -46,7 +46,7 @@ func (c *Client) Check(ctx context.Context, baseURL string) error {
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode/100 != 2 {
 		return fmt.Errorf("prometheus readiness returned HTTP %d", response.StatusCode)
 	}
@@ -74,7 +74,7 @@ func (c *Client) Query(ctx context.Context, baseURL string, query fitness.Metric
 	if err != nil {
 		return 0, nil, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode/100 != 2 {
 		return 0, nil, fmt.Errorf("prometheus query returned HTTP %d", response.StatusCode)
 	}

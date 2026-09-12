@@ -271,7 +271,9 @@ func TestRecordAndUtilityOperations(t *testing.T) {
 	if _, err = service.GetRecord(ctx, "tribe", "missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatal("expected not found")
 	}
-	if RequestHash(map[string]int{"a": 1}) != RequestHash(map[string]int{"a": 1}) {
+	firstHash := RequestHash(map[string]int{"a": 1})
+	secondHash := RequestHash(map[string]int{"a": 1})
+	if firstHash != secondHash {
 		t.Fatal("request hash is not stable")
 	}
 }
@@ -295,11 +297,11 @@ func TestFitnessVersionAndPushFlow(t *testing.T) {
 	}
 	changed := appDefinition(fitness.Push)
 	changed.Name = "new latency"
-	fn, err = service.UpdateFitnessVersion(ctx, id, 2, fn.Revision, changed)
+	_, err = service.UpdateFitnessVersion(ctx, id, 2, fn.Revision, changed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fn, err = service.ActivateFitnessVersion(ctx, id, 2)
+	_, err = service.ActivateFitnessVersion(ctx, id, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
