@@ -75,7 +75,7 @@ Useful environment variables are documented in [.env.example](.env.example).
 
 The GitHub Actions workflow in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) gates pushes and pull requests with Go and web linting, unit coverage, PostgreSQL integration tests, OpenAPI validation and generated-code drift, mutation testing, and vulnerability scans. Pull requests to `main` also scan both container images with Trivy. The full mutation suite runs weekly and on manual dispatch.
 
-After all gates pass on `main`, the workflow publishes signed API and control-tower images to GHCR, generates and attests SBOMs, increments the patch version, and creates a GitHub release. Define the repository variable `POLARIS_OIDC_CLIENT_ID` before the first publish so the Google client ID is embedded in the control-tower build.
+After all gates pass on `main`, the workflow publishes signed API and control-tower images to GHCR, generates and attests SBOMs, increments the patch version, and creates a GitHub release. Define the Actions secret `POLARIS_OIDC_CLIENT_ID` before the first publish so the Google client ID is embedded in the control-tower build.
 
 For UI development, run the API and then start Vite:
 
