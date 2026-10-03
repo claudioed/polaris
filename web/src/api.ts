@@ -9,7 +9,7 @@ import type {
   Squad,
 } from "./types";
 
-const API_BASE = "/api/v1";
+const API_BASE: string = import.meta.env.VITE_API_BASE || "/api/v1";
 
 export class ApiError extends Error {
   status: number;
@@ -52,14 +52,34 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+const MAX_PAGES = 100;
+
+/**
+ * Collects every item of a cursor-paginated collection. The API caps pages at
+ * 200 items, so following `nextCursor` is required to see complete lists.
+ */
+async function listAll<T>(path: string): Promise<T[]> {
+  const items: T[] = [];
+  let cursor: string | undefined;
+  for (let requestCount = 0; requestCount < MAX_PAGES; requestCount += 1) {
+    const params = new URLSearchParams({ limit: "200" });
+    if (cursor !== undefined) params.set("cursor", cursor);
+    const result = await request<Page<T>>(`${path}?${params.toString()}`);
+    items.push(...result.items);
+    if (result.nextCursor === undefined) return items;
+    cursor = result.nextCursor;
+  }
+  throw new Error(`Pagination for ${path} exceeded ${MAX_PAGES} pages`);
+}
+
 export async function loadCatalog(): Promise<Catalog> {
-  const tribesPage = await request<Page<ResourceRecord>>("/tribes?limit=200");
+  const tribes = await listAll<ResourceRecord>("/tribes");
   const squadGroups = await Promise.all(
-    tribesPage.items.map(async (tribe) => {
-      const page = await request<Page<ResourceRecord>>(
-        `/tribes/${encodeURIComponent(tribe.id)}/squads?limit=200`,
+    tribes.map(async (tribe) => {
+      const items = await listAll<ResourceRecord>(
+        `/tribes/${encodeURIComponent(tribe.id)}/squads`,
       );
-      return page.items.map(
+      return items.map(
         (squad): Squad => ({
           ...squad,
           tribeId: tribe.id,
@@ -70,27 +90,28 @@ export async function loadCatalog(): Promise<Catalog> {
   );
   const squads = squadGroups.flat();
   const functionGroups = await Promise.all(
-    squads.map(async (squad) => {
-      const page = await request<Page<FitnessFunction>>(
-        `/squads/${encodeURIComponent(squad.id)}/fitness-functions?limit=200`,
-      );
-      return page.items;
-    }),
+    squads.map((squad) =>
+      listAll<FitnessFunction>(`/squads/${encodeURIComponent(squad.id)}/fitness-functions`),
+    ),
   );
 
   return {
-    tribes: tribesPage.items,
+    tribes,
     squads,
     functions: functionGroups.flat(),
   };
 }
 
-export function getSquadTargets(squadId: string): Promise<Page<ResourceRecord>> {
-  return request(`/squads/${encodeURIComponent(squadId)}/fitness-targets?limit=200`);
+export async function getSquadTargets(squadId: string): Promise<Page<ResourceRecord>> {
+  return {
+    items: await listAll(`/squads/${encodeURIComponent(squadId)}/fitness-targets`),
+  };
 }
 
-export function getSquadSources(squadId: string): Promise<Page<ResourceRecord>> {
-  return request(`/squads/${encodeURIComponent(squadId)}/measurement-sources?limit=200`);
+export async function getSquadSources(squadId: string): Promise<Page<ResourceRecord>> {
+  return {
+    items: await listAll(`/squads/${encodeURIComponent(squadId)}/measurement-sources`),
+  };
 }
 
 export function createFitnessFunction(
@@ -111,6 +132,19 @@ export function activateFitnessFunction(id: string, version: number): Promise<Fi
       body: JSON.stringify({ rationale: "Activated from Polaris Control Tower" }),
     },
   );
+}
+
+/** Appends a draft version; the API guards this with `If-Match: "<revision>"`. */
+export function createFitnessFunctionVersion(
+  fitnessFunctionId: string,
+  revision: number,
+  definition: FitnessDefinition,
+): Promise<FitnessFunction> {
+  return request(`/fitness-functions/${encodeURIComponent(fitnessFunctionId)}/versions`, {
+    method: "POST",
+    headers: { "If-Match": `"${revision}"` },
+    body: JSON.stringify(definition),
+  });
 }
 
 export function createTribe(data: {
@@ -135,7 +169,7 @@ export function createSquad(
 
 export function createFitnessTarget(
   squadId: string,
-  data: { name: string; type: string; description?: string },
+  data: { name: string; kind?: string; description?: string },
 ): Promise<ResourceRecord> {
   return request(`/squads/${encodeURIComponent(squadId)}/fitness-targets`, {
     method: "POST",
