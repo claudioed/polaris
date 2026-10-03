@@ -37,6 +37,11 @@ const inactiveSource = resourceRecord({
   status: "INACTIVE",
   data: { name: "Prometheus legacy" },
 });
+const producerA = resourceRecord({
+  id: "producer-a",
+  kind: "measurement-producer",
+  data: { name: "ci-pipeline" },
+});
 
 interface Captured {
   path: string;
@@ -89,6 +94,7 @@ function useWorkspaceData() {
     "*/api/v1/squads/:squadId/measurement-sources",
     page([activeSource, inactiveSource]),
   );
+  useEndpoint("get", "*/api/v1/squads/:squadId/measurement-producers", page([producerA]));
 }
 
 /** Fills steps 0 and 1 and lands on the data acquisition step. */
@@ -294,7 +300,8 @@ describe("CreateFitnessFunction", () => {
     await user.click(screen.getByRole("button", { name: /Continue/ }));
 
     await user.click(screen.getByRole("button", { name: "Receive from pipeline" }));
-    await user.type(await screen.findByLabelText(/^Producer ID/), "producer-ci");
+    await screen.findByRole("option", { name: "ci-pipeline" });
+    await user.selectOptions(screen.getByLabelText(/^Producer/), "producer-a");
     await user.click(screen.getByRole("button", { name: /Continue/ }));
 
     await user.click(screen.getByLabelText(/Activate immediately/));
@@ -307,6 +314,64 @@ describe("CreateFitnessFunction", () => {
     expect(definition.acquisition.mode).toBe("PUSH");
     expect(activations.length).toBe(1);
     expect(activations[0].path).toBe("/api/v1/fitness-functions/fn-created/versions/1/activations");
+  });
+
+  it("creates a new producer inline from the PUSH acquisition step", async () => {
+    useWorkspaceData();
+    let created = false;
+    server.use(
+      http.get("*/api/v1/squads/:squadId/measurement-producers", () =>
+        HttpResponse.json(page(created ? [producerA, resourceRecord({ id: "producer-new", kind: "measurement-producer", data: { name: "new-pipeline" } })] : [producerA])),
+      ),
+    );
+    const producerCreations = useEndpoint(
+      "post",
+      "*/api/v1/squads/:squadId/measurement-producers",
+      resourceRecord({ id: "producer-new", kind: "measurement-producer", data: { name: "new-pipeline" } }),
+      201,
+    );
+    renderCreate();
+    const user = userEvent.setup();
+
+    await fillWizardToAcquisition(user);
+    await user.click(screen.getByRole("button", { name: "Receive from pipeline" }));
+    await screen.findByRole("option", { name: "ci-pipeline" });
+
+    await user.selectOptions(screen.getByLabelText(/^Producer/), "__new__");
+    await user.type(screen.getByPlaceholderText("e.g. checkout-pipeline"), "new-pipeline");
+    created = true;
+    await user.click(screen.getByRole("button", { name: "Add" }));
+
+    expect(await screen.findByRole("option", { name: "new-pipeline" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Producer/)).toHaveValue("producer-new");
+    expect(producerCreations).toEqual([
+      { path: "/api/v1/squads/squad-1/measurement-producers", body: { name: "new-pipeline" } },
+    ]);
+  });
+
+  it("surfaces a producer creation failure and supports cancelling", async () => {
+    useWorkspaceData();
+    server.use(
+      http.post("*/api/v1/squads/:squadId/measurement-producers", () =>
+        HttpResponse.json(problem({ status: 409, detail: "Producer name already in use" }), { status: 409 }),
+      ),
+    );
+    renderCreate();
+    const user = userEvent.setup();
+
+    await fillWizardToAcquisition(user);
+    await user.click(screen.getByRole("button", { name: "Receive from pipeline" }));
+    await screen.findByRole("option", { name: "ci-pipeline" });
+
+    await user.selectOptions(screen.getByLabelText(/^Producer/), "__new__");
+    await user.type(screen.getByPlaceholderText("e.g. checkout-pipeline"), "dup");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Producer name already in use");
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByLabelText(/^Producer/)).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("e.g. checkout-pipeline")).not.toBeInTheDocument();
   });
 
   it("offers only ACTIVE measurement sources for PULL acquisition", async () => {

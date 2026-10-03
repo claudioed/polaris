@@ -88,7 +88,8 @@ test("creates a PUSH control draft through the wizard", async ({ page }) => {
   await dialog.getByRole("button", { name: "Continue" }).click();
 
   await dialog.getByRole("button", { name: "Receive from pipeline" }).click();
-  await page.getByLabel(/^Producer ID/).fill(producerId);
+  await expect(page.getByRole("option", { name: "Producer Wizard Push" })).toBeAttached();
+  await page.getByLabel(/^Producer/).selectOption(producerId);
   await dialog.getByRole("button", { name: "Continue" }).click();
 
   // The step-3 transition swaps Continue for the submit button at the same

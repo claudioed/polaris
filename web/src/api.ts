@@ -176,3 +176,36 @@ export function createFitnessTarget(
     body: JSON.stringify(data),
   });
 }
+
+export function createMeasurementSource(
+  squadId: string,
+  data: { name: string; providerType: string; baseUrl: string; description?: string },
+): Promise<ResourceRecord> {
+  return request(`/squads/${encodeURIComponent(squadId)}/measurement-sources`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function checkSourceConnection(sourceId: string): Promise<ResourceRecord> {
+  return request(`/measurement-sources/${encodeURIComponent(sourceId)}/connection-checks`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function getSquadProducers(squadId: string): Promise<Page<ResourceRecord>> {
+  return {
+    items: await listAll(`/squads/${encodeURIComponent(squadId)}/measurement-producers`),
+  };
+}
+
+export function createMeasurementProducer(
+  squadId: string,
+  data: { name: string; description?: string },
+): Promise<ResourceRecord> {
+  return request(`/squads/${encodeURIComponent(squadId)}/measurement-producers`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}

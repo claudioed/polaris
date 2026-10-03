@@ -29,12 +29,23 @@ import { loadCatalog } from "./api";
 import { currentUser, onAuthChange, signOut, type GoogleUser } from "./auth";
 import { CreateFitnessFunction } from "./components/CreateFitnessFunction";
 import { FitnessDetails } from "./components/FitnessDetails";
+import { ProducersWorkspace } from "./components/ProducersWorkspace";
 import { SetupWorkspace } from "./components/SetupWorkspace";
 import { SignIn } from "./components/SignIn";
+import { SourcesWorkspace } from "./components/SourcesWorkspace";
+import { TargetsWorkspace } from "./components/TargetsWorkspace";
 import type { AcquisitionMode, Catalog, Enforcement, FitnessFunction, Lifecycle } from "./types";
 import { activeDefinition, initials, matchesQuery, relativeTime } from "./utils";
 
 type FilterValue<T extends string> = T | "ALL";
+type WorkspaceView = "functions" | "targets" | "sources" | "producers";
+
+const breadcrumbs: Record<WorkspaceView, string> = {
+  functions: "Fitness functions",
+  targets: "Fitness targets",
+  sources: "Measurement sources",
+  producers: "Measurement producers",
+};
 
 export function App() {
   const [user, setUser] = useState<GoogleUser | null>(currentUser());
@@ -49,6 +60,7 @@ export function App() {
   const [setupOpen, setSetupOpen] = useState(false);
   const [creationSquadId, setCreationSquadId] = useState<string>();
   const [mobileNav, setMobileNav] = useState(false);
+  const [view, setView] = useState<WorkspaceView>("functions");
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -115,13 +127,13 @@ export function App() {
         </div>
         <nav>
           <p>Workspace</p>
-          <button onClick={() => { setSearch(""); setLifecycle("ALL"); setEnforcement("ALL"); setAcquisition("ALL"); window.scrollTo({ top: 0, behavior: "smooth" }); }}><LayoutDashboard size={18} /><span>Overview</span></button>
-          <button className="active"><CircleGauge size={18} /><span>Fitness functions</span><em>{catalog?.functions.length ?? "—"}</em></button>
+          <button className={clsx(view === "functions" && "active")} onClick={() => { setView("functions"); setSearch(""); setLifecycle("ALL"); setEnforcement("ALL"); setAcquisition("ALL"); window.scrollTo({ top: 0, behavior: "smooth" }); }}><LayoutDashboard size={18} /><span>Overview</span></button>
+          <button className={clsx(view === "functions" && "active")} onClick={() => setView("functions")}><CircleGauge size={18} /><span>Fitness functions</span><em>{catalog?.functions.length ?? "—"}</em></button>
           <button disabled title="Evaluation workspace is planned"><Activity size={18} /><span>Evaluations</span><em>Soon</em></button>
-          <button disabled title="Target workspace is planned"><Target size={18} /><span>Fitness targets</span><em>Soon</em></button>
+          <button className={clsx(view === "targets" && "active")} onClick={() => setView("targets")}><Target size={18} /><span>Fitness targets</span></button>
           <p>Connections</p>
-          <button disabled title="Source workspace is planned"><DatabaseZap size={18} /><span>Measurement sources</span><em>Soon</em></button>
-          <button disabled title="Producer workspace is planned"><Network size={18} /><span>Producers</span><em>Soon</em></button>
+          <button className={clsx(view === "sources" && "active")} onClick={() => setView("sources")}><DatabaseZap size={18} /><span>Measurement sources</span></button>
+          <button className={clsx(view === "producers" && "active")} onClick={() => setView("producers")}><Network size={18} /><span>Producers</span></button>
           <p>Governance</p>
           <button disabled title="Template workspace is planned"><Blocks size={18} /><span>Templates</span><em>Soon</em></button>
           <button disabled title="Waiver workspace is planned"><ShieldCheck size={18} /><span>Waivers</span><em>Soon</em></button>
@@ -137,13 +149,14 @@ export function App() {
       <main>
         <header className="topbar">
           <button className="icon-button menu-button" onClick={() => setMobileNav(true)} aria-label="Open navigation"><Menu size={20} /></button>
-          <div className="breadcrumb"><span>Engineering controls</span><b>/</b><strong>Fitness functions</strong></div>
+          <div className="breadcrumb"><span>Engineering controls</span><b>/</b><strong>{breadcrumbs[view]}</strong></div>
           <div className="top-actions">
             <button className="keyboard-hint" onClick={() => searchRef.current?.focus()} aria-label="Focus search"><Command size={13} /> K</button>
             <button className="avatar" onClick={() => signOut()} title={`Sign out (${user.email})`} aria-label={`Sign out (${user.email})`}>{initials(user.name)}</button>
           </div>
         </header>
 
+        {view === "functions" && (
         <div className="content">
           <section className="page-heading">
             <div>
@@ -236,6 +249,26 @@ export function App() {
             </>
           )}
         </div>
+        )}
+
+        {view !== "functions" && catalogQuery.isLoading && (
+          <div className="content"><LoadingState /></div>
+        )}
+        {view !== "functions" && catalogQuery.isError && (
+          <div className="content">
+            <section className="error-state">
+              <AlertTriangle size={24} />
+              <div>
+                <h2>Control tower is offline</h2>
+                <p>{catalogQuery.error.message}</p>
+              </div>
+              <button className="button secondary" onClick={() => catalogQuery.refetch()}><RefreshCw size={16} /> Retry</button>
+            </section>
+          </div>
+        )}
+        {view === "targets" && catalog && <TargetsWorkspace catalog={catalog} />}
+        {view === "sources" && catalog && <SourcesWorkspace catalog={catalog} />}
+        {view === "producers" && catalog && <ProducersWorkspace catalog={catalog} />}
       </main>
 
       {selected && catalog && <FitnessDetails item={selected} catalog={catalog} onClose={() => setSelectedId(undefined)} />}
