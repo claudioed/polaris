@@ -71,4 +71,12 @@ describe("fitness catalog utilities", () => {
     expect(relativeTime("2026-07-24T10:00:00Z")).toBe("Yesterday");
     expect(relativeTime()).toBe("Not activated");
   });
+
+  it("formats relative dates across day and month ranges", () => {
+    vi.setSystemTime(new Date("2026-07-25T10:00:00Z"));
+    expect(relativeTime("2026-07-25T08:00:00Z")).toBe("Today");
+    expect(relativeTime("2026-07-20T10:00:00Z")).toBe("5 days ago");
+    expect(relativeTime("2026-06-25T10:00:00Z")).toBe("1 month ago");
+    expect(relativeTime("2026-05-25T10:00:00Z")).toBe("2 months ago");
+  });
 });
