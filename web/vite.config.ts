@@ -1,12 +1,33 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
   test: {
     environment: "jsdom",
+    // Playwright owns tests/e2e and the integration tier has its own config;
+    // the unit run must not collect either.
+    exclude: [...configDefaults.exclude, "**/tests/e2e/**", "**/tests/integration/**"],
+    environmentOptions: {
+      jsdom: {
+        // Non-routable origin: a request that slips past MSW must fail with a
+        // network error instead of reaching a real local service.
+        url: "http://polaris.test/",
+      },
+    },
     setupFiles: "./src/test/setup.ts",
     restoreMocks: true,
+    coverage: {
+      provider: "v8",
+      include: ["src/**"],
+      exclude: ["src/test/**", "src/main.tsx"],
+      thresholds: {
+        lines: 92,
+        functions: 92,
+        branches: 92,
+        statements: 92,
+      },
+    },
   },
   server: {
     port: 5173,

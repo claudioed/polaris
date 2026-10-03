@@ -2,7 +2,7 @@
 
 Polaris is a squad-owned architectural fitness-function control plane. It receives pipeline measurements, pulls Prometheus measurements, evaluates versioned criteria, and retains evidence, lifecycle history, audit events, and delivery events.
 
-The business and domain model is in [polaris.md](polaris.md). The REST contract is [api/openapi.yaml](api/openapi.yaml).
+The business and domain model is in [polaris.md](polaris.md). The REST contract is [api/openapi.yaml](api/openapi.yaml). The full documentation — REST API reference, architecture, modules, and domain model — is published at [claudioed.github.io/polaris](https://claudioed.github.io/polaris/) from [docs-site](docs-site) (Docusaurus) and redeployed on every change to the contract or the site.
 
 ## Architecture
 
@@ -35,20 +35,40 @@ HTTP-originated audit events use the authenticated principal's subject; worker a
 
 ## Run
 
+Create the local environment file, then set `POLARIS_OIDC_CLIENT_ID` and `POLARIS_INGEST_SECRET_KEY` to real values as described above:
+
+```sh
+cp .env.example .env
+```
+
+Start the stack:
+
 ```sh
 docker compose up --build
 ```
 
-The control tower is available at `http://localhost:3000`. The API is available at `http://localhost:8080/api/v1`, its live contract at `http://localhost:8080/openapi.yaml`, PostgreSQL at port `5432`, and the development Prometheus instance at port `9090`.
+The control tower is available at `http://localhost:3000`. The API is available at `http://localhost:8080/api/v1`, its live contract at `http://localhost:8080/openapi.yaml`, and PostgreSQL at port `5432`.
+
+If one of those host ports is already in use, override `POLARIS_CONTROL_TOWER_PORT`, `POLARIS_HTTP_PORT`, or `POLARIS_POSTGRES_PORT` in `.env`. The container ports and service-to-service addresses remain unchanged.
 
 To run the Go process outside Docker:
 
 ```sh
-docker compose up -d postgres prometheus
+docker compose up -d postgres
 go run ./cmd/polaris
 ```
 
 Database migrations run automatically and are safe to run again.
+
+### Public domain
+
+To serve the stack on a public domain over TLS, point DNS at the host, add the `https://<domain>` origin to the Google OAuth client, and activate the Caddy edge profile:
+
+```sh
+docker compose --profile edge up --build -d
+```
+
+The [deployment guide](https://claudioed.github.io/polaris/docs/introduction/deployment) covers DNS, OAuth origins, secrets, and wiring producers and `polaris-mcp` to the domain.
 
 ## Development
 

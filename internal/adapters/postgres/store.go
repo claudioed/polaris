@@ -10,6 +10,7 @@ import (
 
 	"github.com/claudioed/polaris/internal/application"
 	"github.com/claudioed/polaris/internal/domain/fitness"
+	"github.com/claudioed/polaris/internal/domain/slug"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -34,14 +35,21 @@ func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 func (s *Store) CreateRecord(ctx context.Context, r application.Record, event application.Event) error {
 	return s.tx(ctx, func(tx pgx.Tx) error {
 		data, _ := json.Marshal(r.Data)
+		if (r.Kind == "tribe" || r.Kind == "squad") && r.Slug == "" {
+			// Defensive default for callers that build a Record directly
+			// (bypassing application.Service, which normally resolves this):
+			// derive from name rather than violate the NOT NULL/format
+			// constraint on slug.
+			r.Slug = slug.Generate(text(r.Data, "name"))
+		}
 		var err error
 		switch r.Kind {
 		case "tribe":
-			_, err = tx.Exec(ctx, `INSERT INTO tribes(id,name,description,status,revision,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7)`,
-				r.ID, text(r.Data, "name"), text(r.Data, "description"), r.Status, r.Revision, r.CreatedAt, r.UpdatedAt)
+			_, err = tx.Exec(ctx, `INSERT INTO tribes(id,slug,name,description,status,revision,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+				r.ID, r.Slug, text(r.Data, "name"), text(r.Data, "description"), r.Status, r.Revision, r.CreatedAt, r.UpdatedAt)
 		case "squad":
-			_, err = tx.Exec(ctx, `INSERT INTO squads(id,tribe_id,name,mission,status,data,revision,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-				r.ID, r.ParentID, text(r.Data, "name"), text(r.Data, "mission"), r.Status, data, r.Revision, r.CreatedAt, r.UpdatedAt)
+			_, err = tx.Exec(ctx, `INSERT INTO squads(id,tribe_id,slug,name,mission,status,data,revision,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+				r.ID, r.ParentID, r.Slug, text(r.Data, "name"), text(r.Data, "mission"), r.Status, data, r.Revision, r.CreatedAt, r.UpdatedAt)
 		case "fitness-target":
 			_, err = tx.Exec(ctx, `INSERT INTO fitness_targets(id,squad_id,name,lifecycle,data,revision,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
 				r.ID, r.ParentID, text(r.Data, "name"), r.Status, data, r.Revision, r.CreatedAt, r.UpdatedAt)
@@ -69,11 +77,11 @@ func (s *Store) GetRecord(ctx context.Context, kind, id string) (application.Rec
 	var err error
 	switch kind {
 	case "tribe":
-		err = s.pool.QueryRow(ctx, `SELECT status,revision,created_at,updated_at,jsonb_build_object('name',name,'description',description) FROM tribes WHERE id=$1`, id).
-			Scan(&r.Status, &r.Revision, &r.CreatedAt, &r.UpdatedAt, &data)
+		err = s.pool.QueryRow(ctx, `SELECT id,slug,status,revision,created_at,updated_at,jsonb_build_object('name',name,'description',description) FROM tribes WHERE id::text=$1 OR slug=$1`, id).
+			Scan(&r.ID, &r.Slug, &r.Status, &r.Revision, &r.CreatedAt, &r.UpdatedAt, &data)
 	case "squad":
-		err = s.pool.QueryRow(ctx, `SELECT tribe_id,status,revision,created_at,updated_at,data FROM squads WHERE id=$1`, id).
-			Scan(&r.ParentID, &r.Status, &r.Revision, &r.CreatedAt, &r.UpdatedAt, &data)
+		err = s.pool.QueryRow(ctx, `SELECT id,tribe_id,slug,status,revision,created_at,updated_at,data FROM squads WHERE id::text=$1 OR slug=$1`, id).
+			Scan(&r.ID, &r.ParentID, &r.Slug, &r.Status, &r.Revision, &r.CreatedAt, &r.UpdatedAt, &data)
 	case "fitness-target":
 		err = s.pool.QueryRow(ctx, `SELECT squad_id,lifecycle,revision,created_at,updated_at,data FROM fitness_targets WHERE id=$1`, id).
 			Scan(&r.ParentID, &r.Status, &r.Revision, &r.CreatedAt, &r.UpdatedAt, &data)
@@ -101,20 +109,27 @@ func (s *Store) ListRecords(ctx context.Context, kind, parentID string, limit in
 			after = time.Unix(0, n).UTC()
 		}
 	}
-	query := `SELECT id,COALESCE(parent_id::text,''),status,revision,created_at,updated_at,data FROM resource_documents WHERE kind=$1 AND ($2='' OR parent_id=$2::uuid) AND created_at>$3 ORDER BY created_at,id LIMIT $4`
+	query := `SELECT id,''::text,COALESCE(parent_id::text,''),status,revision,created_at,updated_at,data FROM resource_documents WHERE kind=$1 AND ($2='' OR parent_id=$2::uuid) AND created_at>$3 ORDER BY created_at,id LIMIT $4`
 	args := []any{kind, parentID, after, limit}
 	switch kind {
 	case "tribe":
-		query = `SELECT id,''::text,status,revision,created_at,updated_at,jsonb_build_object('name',name,'description',description) FROM tribes WHERE created_at>$1 ORDER BY created_at,id LIMIT $2`
+		query = `SELECT id,slug,''::text,status,revision,created_at,updated_at,jsonb_build_object('name',name,'description',description) FROM tribes WHERE created_at>$1 ORDER BY created_at,id LIMIT $2`
 		args = []any{after, limit}
 	case "squad":
-		query = `SELECT id,tribe_id::text,status,revision,created_at,updated_at,data FROM squads WHERE ($1='' OR tribe_id=$1::uuid) AND created_at>$2 ORDER BY created_at,id LIMIT $3`
+		query = `SELECT id,slug,tribe_id::text,status,revision,created_at,updated_at,data FROM squads WHERE ($1='' OR tribe_id=$1::uuid) AND created_at>$2 ORDER BY created_at,id LIMIT $3`
 		args = []any{parentID, after, limit}
 	case "fitness-target":
-		query = `SELECT id,squad_id::text,lifecycle,revision,created_at,updated_at,data FROM fitness_targets WHERE ($1='' OR squad_id=$1::uuid) AND created_at>$2 ORDER BY created_at,id LIMIT $3`
+		query = `SELECT id,''::text,squad_id::text,lifecycle,revision,created_at,updated_at,data FROM fitness_targets WHERE ($1='' OR squad_id=$1::uuid) AND created_at>$2 ORDER BY created_at,id LIMIT $3`
 		args = []any{parentID, after, limit}
 	case "measurement-source":
-		query = `SELECT id,squad_id::text,status,revision,created_at,updated_at,data || jsonb_build_object('name',name,'providerType',provider_type,'baseUrl',base_url) FROM measurement_sources WHERE ($1='' OR squad_id=$1::uuid) AND created_at>$2 ORDER BY created_at,id LIMIT $3`
+		query = `SELECT id,''::text,squad_id::text,status,revision,created_at,updated_at,data || jsonb_build_object('name',name,'providerType',provider_type,'baseUrl',base_url) FROM measurement_sources WHERE ($1='' OR squad_id=$1::uuid) AND created_at>$2 ORDER BY created_at,id LIMIT $3`
+		args = []any{parentID, after, limit}
+	case "measurement-producer":
+		// measurement_producers has no status/revision/updated_at columns
+		// (see migrations/00001_initial.sql); producers are create-once,
+		// immutable records, so ACTIVE/revision 1/updated_at=created_at are
+		// synthesized to fit the generic Record shape.
+		query = `SELECT id,''::text,squad_id::text,'ACTIVE'::text,1,created_at,created_at,data FROM measurement_producers WHERE ($1='' OR squad_id=$1::uuid) AND created_at>$2 ORDER BY created_at,id LIMIT $3`
 		args = []any{parentID, after, limit}
 	}
 	rows, err := s.pool.Query(ctx, query, args...)
@@ -127,7 +142,7 @@ func (s *Store) ListRecords(ctx context.Context, kind, parentID string, limit in
 		var r application.Record
 		var data []byte
 		r.Kind = kind
-		if err = rows.Scan(&r.ID, &r.ParentID, &r.Status, &r.Revision, &r.CreatedAt, &r.UpdatedAt, &data); err != nil {
+		if err = rows.Scan(&r.ID, &r.Slug, &r.ParentID, &r.Status, &r.Revision, &r.CreatedAt, &r.UpdatedAt, &data); err != nil {
 			return nil, "", err
 		}
 		_ = json.Unmarshal(data, &r.Data)
@@ -185,8 +200,15 @@ func (s *Store) OwnedTargetIDs(ctx context.Context, squadID string) ([]string, e
 
 func (s *Store) CreateFitnessFunction(ctx context.Context, fn *fitness.Function, event application.Event) error {
 	return s.tx(ctx, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `INSERT INTO fitness_functions(id,squad_id,name,lifecycle,active_version,revision,created_at,updated_at) VALUES($1,$2,$3,$4,NULL,$5,$6,$6)`,
-			fn.ID, fn.OwnerSquadID, fn.Versions[0].Definition.Name, fn.Lifecycle, fn.Revision, fn.Versions[0].CreatedAt); err != nil {
+		if fn.Slug == "" {
+			// Defensive default for callers that build a *fitness.Function
+			// directly (bypassing application.Service, which normally
+			// resolves this): derive from the initial definition's name
+			// rather than violate the NOT NULL/format constraint on slug.
+			fn.Slug = slug.Generate(fn.Versions[0].Definition.Name)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO fitness_functions(id,squad_id,slug,name,lifecycle,active_version,revision,created_at,updated_at) VALUES($1,$2,$3,$4,$5,NULL,$6,$7,$7)`,
+			fn.ID, fn.OwnerSquadID, fn.Slug, fn.Versions[0].Definition.Name, fn.Lifecycle, fn.Revision, fn.Versions[0].CreatedAt); err != nil {
 			return mapError(err)
 		}
 		if err := insertVersions(ctx, tx, fn); err != nil {
@@ -198,14 +220,14 @@ func (s *Store) CreateFitnessFunction(ctx context.Context, fn *fitness.Function,
 
 func (s *Store) GetFitnessFunction(ctx context.Context, id string) (*fitness.Function, error) {
 	fn := &fitness.Function{ID: id}
-	if err := s.pool.QueryRow(ctx, `SELECT squad_id,lifecycle,COALESCE(active_version,0),revision FROM fitness_functions WHERE id=$1`, id).
-		Scan(&fn.OwnerSquadID, &fn.Lifecycle, &fn.ActiveVersion, &fn.Revision); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT id,slug,squad_id,lifecycle,COALESCE(active_version,0),revision FROM fitness_functions WHERE id::text=$1 OR slug=$1`, id).
+		Scan(&fn.ID, &fn.Slug, &fn.OwnerSquadID, &fn.Lifecycle, &fn.ActiveVersion, &fn.Revision); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, application.ErrNotFound
 		}
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT version,state,definition,created_at,activated_at FROM fitness_function_versions WHERE fitness_function_id=$1 ORDER BY version`, id)
+	rows, err := s.pool.Query(ctx, `SELECT version,state,definition,created_at,activated_at FROM fitness_function_versions WHERE fitness_function_id=$1 ORDER BY version`, fn.ID)
 	if err != nil {
 		return nil, err
 	}

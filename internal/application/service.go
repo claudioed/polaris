@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/claudioed/polaris/internal/domain/fitness"
+	"github.com/claudioed/polaris/internal/domain/slug"
 )
 
 var (
@@ -26,6 +27,7 @@ type Record struct {
 	ID        string         `json:"id"`
 	ParentID  string         `json:"parentId,omitempty"`
 	Kind      string         `json:"kind"`
+	Slug      string         `json:"slug,omitempty"`
 	Status    string         `json:"status,omitempty"`
 	Revision  int            `json:"revision"`
 	Data      map[string]any `json:"data"`
@@ -101,6 +103,11 @@ func NewService(store Store, ids IDGenerator, clock Clock, collector Collector) 
 func (s *Service) Ready(ctx context.Context) error { return s.store.Ping(ctx) }
 
 func (s *Service) CreateRecord(ctx context.Context, kind, parentID string, data map[string]any) (Record, error) {
+	resolvedParentID, err := s.resolveParentID(ctx, kind, parentID)
+	if err != nil {
+		return Record{}, err
+	}
+	parentID = resolvedParentID
 	now := s.clock.Now()
 	status := "ACTIVE"
 	switch kind {
@@ -112,6 +119,16 @@ func (s *Service) CreateRecord(ctx context.Context, kind, parentID string, data 
 		status = "PROPOSED"
 	}
 	record := Record{ID: s.ids.New(), ParentID: parentID, Kind: kind, Status: status, Revision: 1, Data: clone(data), CreatedAt: now, UpdatedAt: now}
+	if kind == "tribe" || kind == "squad" {
+		explicit, _ := data["slug"].(string)
+		name, _ := data["name"].(string)
+		resolved, err := slug.Resolve(explicit, name)
+		if err != nil {
+			return Record{}, fmt.Errorf("%w: %v", ErrInvalid, err)
+		}
+		record.Slug = resolved
+		delete(record.Data, "slug") // lives on Record.Slug, not duplicated into the stored/returned data blob
+	}
 	event := s.event(kind+"Created", kind, record.ID, map[string]any{"parentId": parentID})
 	if err := s.store.CreateRecord(ctx, record, event); err != nil {
 		return Record{}, err
@@ -119,18 +136,63 @@ func (s *Service) CreateRecord(ctx context.Context, kind, parentID string, data 
 	return record, nil
 }
 
+// parentKindOf names the Record kind, or "fitness-function" (which is not a
+// Record kind at all -- it's the dedicated fitness.Function aggregate), that
+// owns each sluggable child kind's parentID. Kinds absent from this map have
+// no sluggable parent, so their parentID (if any) is used as-is.
+var parentKindOf = map[string]string{
+	"squad":                     "tribe",
+	"fitness-target":            "squad",
+	"measurement-source":        "squad",
+	"measurement-producer":      "squad",
+	"evaluation-request":        "fitness-function",
+	"waiver":                    "fitness-function",
+	"fitness-function-template": "tribe",
+}
+
+// resolveParentID turns a path parameter that may be either a parent's UUID
+// or its slug into the parent's real UUID, so every downstream query and
+// foreign key uses the real identifier rather than whatever string the
+// caller happened to address it by. A parentID of "" (no parent, or a
+// parent kind not in parentKindOf) passes through unchanged.
+func (s *Service) resolveParentID(ctx context.Context, kind, parentID string) (string, error) {
+	if parentID == "" {
+		return parentID, nil
+	}
+	switch parentKindOf[kind] {
+	case "tribe", "squad":
+		parent, err := s.store.GetRecord(ctx, parentKindOf[kind], parentID)
+		if err != nil {
+			return "", err
+		}
+		return parent.ID, nil
+	case "fitness-function":
+		fn, err := s.store.GetFitnessFunction(ctx, parentID)
+		if err != nil {
+			return "", err
+		}
+		return fn.ID, nil
+	default:
+		return parentID, nil
+	}
+}
+
 func (s *Service) GetRecord(ctx context.Context, kind, id string) (Record, error) {
 	return s.store.GetRecord(ctx, kind, id)
 }
 
 func (s *Service) ListRecords(ctx context.Context, kind, parentID string, limit int, cursor string) ([]Record, string, error) {
+	resolvedParentID, err := s.resolveParentID(ctx, kind, parentID)
+	if err != nil {
+		return nil, "", err
+	}
 	if limit < 1 {
 		limit = 50
 	}
 	if limit > 200 {
 		limit = 200
 	}
-	return s.store.ListRecords(ctx, kind, parentID, limit, cursor)
+	return s.store.ListRecords(ctx, kind, resolvedParentID, limit, cursor)
 }
 
 func (s *Service) TransitionRecord(ctx context.Context, kind, id, status string, patch map[string]any) (Record, error) {
@@ -155,7 +217,12 @@ func (s *Service) TransitionRecord(ctx context.Context, kind, id, status string,
 	return record, nil
 }
 
-func (s *Service) CreateFitnessFunction(ctx context.Context, squadID string, definition fitness.Definition) (*fitness.Function, error) {
+func (s *Service) CreateFitnessFunction(ctx context.Context, squadID string, definition fitness.Definition, explicitSlug string) (*fitness.Function, error) {
+	squad, err := s.store.GetRecord(ctx, "squad", squadID)
+	if err != nil {
+		return nil, err
+	}
+	squadID = squad.ID
 	targets, err := s.store.OwnedTargetIDs(ctx, squadID)
 	if err != nil {
 		return nil, err
@@ -164,6 +231,11 @@ func (s *Service) CreateFitnessFunction(ctx context.Context, squadID string, def
 	if err != nil {
 		return nil, err
 	}
+	resolved, err := slug.Resolve(explicitSlug, definition.Name)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	fn.Slug = resolved
 	if err := s.store.CreateFitnessFunction(ctx, fn, s.event("FitnessFunctionDrafted", "fitness-function", fn.ID, nil)); err != nil {
 		return nil, err
 	}
@@ -207,13 +279,17 @@ func (s *Service) GetFitnessFunction(ctx context.Context, id string) (*fitness.F
 }
 
 func (s *Service) ListFitnessFunctions(ctx context.Context, squadID string, limit int, cursor string) ([]*fitness.Function, string, error) {
+	squad, err := s.store.GetRecord(ctx, "squad", squadID)
+	if err != nil {
+		return nil, "", err
+	}
 	if limit < 1 {
 		limit = 50
 	}
 	if limit > 200 {
 		limit = 200
 	}
-	return s.store.ListFitnessFunctions(ctx, squadID, limit, cursor)
+	return s.store.ListFitnessFunctions(ctx, squad.ID, limit, cursor)
 }
 
 func (s *Service) UpdateFitnessVersion(ctx context.Context, id string, version, expectedRevision int, definition fitness.Definition) (*fitness.Function, error) {
@@ -297,13 +373,17 @@ func (s *Service) GetEvaluation(ctx context.Context, id string) (EvaluationRecor
 }
 
 func (s *Service) ListEvaluations(ctx context.Context, functionID string, limit int, cursor string) ([]EvaluationRecord, string, error) {
+	fn, err := s.store.GetFitnessFunction(ctx, functionID)
+	if err != nil {
+		return nil, "", err
+	}
 	if limit < 1 {
 		limit = 50
 	}
 	if limit > 200 {
 		limit = 200
 	}
-	return s.store.ListEvaluations(ctx, functionID, limit, cursor)
+	return s.store.ListEvaluations(ctx, fn.ID, limit, cursor)
 }
 
 func (s *Service) PollEvents(ctx context.Context, cursor int64, limit int) ([]Event, int64, error) {
@@ -384,8 +464,8 @@ func (s *Service) Submit(ctx context.Context, functionID string, submission Subm
 	}
 	submissionID, evaluationID := s.ids.New(), s.ids.New()
 	data := map[string]any{"producerId": submission.ProducerID, "externalRunId": submission.ExternalRunID, "measurements": submission.Measurements, "evidence": submission.Evidence}
-	record := Record{ID: submissionID, ParentID: functionID, Kind: "measurement-submission", Status: "ACCEPTED", Revision: 1, Data: data, CreatedAt: now, UpdatedAt: now}
-	result := EvaluationRecord{ID: evaluationID, FitnessFunctionID: functionID, FitnessFunctionVersion: submission.FitnessVersion, AcquisitionMode: fitness.Push, OriginID: submissionID, Evaluation: evaluation, Data: data}
+	record := Record{ID: submissionID, ParentID: fn.ID, Kind: "measurement-submission", Status: "ACCEPTED", Revision: 1, Data: data, CreatedAt: now, UpdatedAt: now}
+	result := EvaluationRecord{ID: evaluationID, FitnessFunctionID: fn.ID, FitnessFunctionVersion: submission.FitnessVersion, AcquisitionMode: fitness.Push, OriginID: submissionID, Evaluation: evaluation, Data: data}
 	if err = s.store.SaveSubmissionAndEvaluation(ctx, record, result, s.event("EvaluationRecorded", "evaluation", evaluationID, map[string]any{"outcome": evaluation.Outcome})); err != nil {
 		return EvaluationRecord{}, false, err
 	}
@@ -426,8 +506,8 @@ func (s *Service) Collect(ctx context.Context, functionID string) (EvaluationRec
 	}
 	originID, evaluationID := s.ids.New(), s.ids.New()
 	data := map[string]any{"sourceId": definition.Acquisition.SourceID, "measurements": measurements, "evidence": evidence}
-	record := Record{ID: originID, ParentID: functionID, Kind: "collection-attempt", Status: "SUCCEEDED", Revision: 1, Data: data, CreatedAt: now, UpdatedAt: now}
-	result := EvaluationRecord{ID: evaluationID, FitnessFunctionID: functionID, FitnessFunctionVersion: fn.ActiveVersion, AcquisitionMode: fitness.Pull, OriginID: originID, Evaluation: evaluation, Data: data}
+	record := Record{ID: originID, ParentID: fn.ID, Kind: "collection-attempt", Status: "SUCCEEDED", Revision: 1, Data: data, CreatedAt: now, UpdatedAt: now}
+	result := EvaluationRecord{ID: evaluationID, FitnessFunctionID: fn.ID, FitnessFunctionVersion: fn.ActiveVersion, AcquisitionMode: fitness.Pull, OriginID: originID, Evaluation: evaluation, Data: data}
 	if err = s.store.SaveSubmissionAndEvaluation(ctx, record, result, s.event("CollectionCompleted", "collection-attempt", originID, map[string]any{"evaluationId": evaluationID})); err != nil {
 		return EvaluationRecord{}, err
 	}

@@ -1,8 +1,17 @@
 coverage.out
+.env
 bin/
 .DS_Store
 .idea/
 /polaris
 web/node_modules/
 web/dist/
+web/coverage/
 web/*.tsbuildinfo
+web/tests/e2e/.stack.json
+web/playwright-report/
+web/test-results/
+docs-site/node_modules/
+docs-site/build/
+docs-site/.docusaurus/
+docs-site/docs/api/

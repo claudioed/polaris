@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/claudioed/polaris/internal/adapters/httpapi/oidctest"
+	"github.com/claudioed/polaris/internal/domain/fitness"
 )
 
 const observedAt = "2026-08-22T11:55:00Z"
@@ -680,6 +681,7 @@ func TestInternalErrorMapsToProblem(t *testing.T) {
 	}
 
 	store.createErr = errStoreDown
+	store.functions["fn-1"] = &fitness.Function{ID: "fn-1"}
 	rec = a.post("/api/v1/fitness-functions/fn-1/evaluation-requests", `{}`)
 	a.mustCode(http.StatusInternalServerError, rec, "evaluation request create failure")
 	rec = a.get("/api/v1/evaluations/missing")

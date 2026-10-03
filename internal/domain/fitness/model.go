@@ -216,6 +216,7 @@ type Version struct {
 
 type Function struct {
 	ID            string    `json:"id"`
+	Slug          string    `json:"slug,omitempty"`
 	OwnerSquadID  string    `json:"ownerSquadId"`
 	Lifecycle     Lifecycle `json:"lifecycle"`
 	Revision      int       `json:"revision"`

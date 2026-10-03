@@ -16,6 +16,8 @@ import { z } from "zod";
 import {
   activateFitnessFunction,
   createFitnessFunction,
+  createMeasurementProducer,
+  getSquadProducers,
   getSquadSources,
   getSquadTargets,
 } from "../api";
@@ -24,6 +26,7 @@ import type {
   Catalog,
   Criterion,
   FitnessDefinition,
+  ResourceRecord,
 } from "../types";
 
 interface Props {
@@ -153,6 +156,11 @@ export function CreateFitnessFunction({
     queryKey: ["sources", squadId],
     queryFn: () => getSquadSources(squadId),
     enabled: Boolean(squadId) && acquisitionMode === "PULL",
+  });
+  const producersQuery = useQuery({
+    queryKey: ["producers", squadId],
+    queryFn: () => getSquadProducers(squadId),
+    enabled: Boolean(squadId) && acquisitionMode === "PUSH",
   });
 
   useEffect(() => {
@@ -413,10 +421,10 @@ export function CreateFitnessFunction({
                   <p>Choose whether Polaris receives pipeline data or collects it from a source.</p>
                 </div>
                 <div className="segmented">
-                  <button type="button" className={acquisitionMode === "PULL" ? "active" : ""} onClick={() => setValue("acquisitionMode", "PULL")}>
+                  <button type="button" className={acquisitionMode === "PULL" ? "active" : ""} onClick={() => setValue("acquisitionMode", "PULL", { shouldDirty: true })}>
                     Pull from source
                   </button>
-                  <button type="button" className={acquisitionMode === "PUSH" ? "active" : ""} onClick={() => setValue("acquisitionMode", "PUSH")}>
+                  <button type="button" className={acquisitionMode === "PUSH" ? "active" : ""} onClick={() => setValue("acquisitionMode", "PUSH", { shouldDirty: true })}>
                     Receive from pipeline
                   </button>
                 </div>
@@ -508,9 +516,16 @@ export function CreateFitnessFunction({
                 ) : (
                   <div className="field-grid two">
                     <label className="field">
-                      <span>Producer ID</span>
-                      <input {...register("producerId")} placeholder="Pipeline producer UUID" />
-                      <small>The registered pipeline or test runner that will submit data.</small>
+                      <span>Producer</span>
+                      <ProducerPicker
+                        squadId={squadId}
+                        value={watched.producerId ?? ""}
+                        producers={producersQuery.data?.items ?? []}
+                        loading={producersQuery.isLoading}
+                        onChange={(value) => setValue("producerId", value, { shouldValidate: true })}
+                        onCreated={() => void producersQuery.refetch()}
+                      />
+                      <small>The registered pipeline or service identity that will submit data.</small>
                     </label>
                     <label className="field">
                       <span>Maximum observation age</span>
@@ -602,6 +617,96 @@ export function CreateFitnessFunction({
           </footer>
         </form>
       </section>
+    </div>
+  );
+}
+
+interface ProducerPickerProps {
+  squadId: string;
+  value: string;
+  producers: ResourceRecord[];
+  loading: boolean;
+  onChange: (value: string) => void;
+  onCreated: () => void;
+}
+
+function ProducerPicker({ squadId, value, producers, loading, onChange, onCreated }: ProducerPickerProps) {
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [error, setError] = useState("");
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      if (name.trim().length < 2) throw new Error("Enter a producer name.");
+      return createMeasurementProducer(squadId, { name: name.trim() });
+    },
+    onSuccess: (producer) => {
+      onChange(producer.id);
+      onCreated();
+      setCreating(false);
+      setName("");
+    },
+    onError: (failure) => setError(failure.message),
+  });
+
+  if (creating) {
+    return (
+      <div className="field-grid two" style={{ gridTemplateColumns: "1fr auto" }}>
+        <input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="e.g. checkout-pipeline"
+          autoFocus
+        />
+        <button
+          type="button"
+          className="button secondary small"
+          onClick={() => mutation.mutate()}
+          disabled={mutation.isPending}
+        >
+          {mutation.isPending ? <LoaderCircle size={14} className="spin" /> : <Plus size={14} />}
+          Add
+        </button>
+        {error && (
+          <div className="form-alert" role="alert" style={{ gridColumn: "1 / -1" }}>
+            <CircleAlert size={17} />
+            <span>{error}</span>
+          </div>
+        )}
+        <button
+          type="button"
+          className="button ghost small"
+          style={{ gridColumn: "1 / -1" }}
+          onClick={() => { setCreating(false); setError(""); }}
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="select-wrap">
+      <select
+        value={value}
+        onChange={(event) => {
+          if (event.target.value === "__new__") {
+            setCreating(true);
+            return;
+          }
+          onChange(event.target.value);
+        }}
+        disabled={loading}
+      >
+        <option value="">{loading ? "Loading producers…" : "Choose a producer"}</option>
+        {producers.map((producer) => (
+          <option value={producer.id} key={producer.id}>
+            {String(producer.data.name ?? producer.id)}
+          </option>
+        ))}
+        <option value="__new__">Create a new producer…</option>
+      </select>
+      <ChevronDown size={16} />
     </div>
   );
 }

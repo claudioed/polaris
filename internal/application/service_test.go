@@ -62,6 +62,20 @@ func newMemoryStore() *memoryStore {
 }
 
 func recordKey(kind, id string) string { return kind + ":" + id }
+
+// seedSquad/seedTribe/seedFitnessFunction insert a minimal parent record
+// directly into the fake store, standing in for the real GetRecord/
+// GetFitnessFunction lookup that Service now performs to resolve a
+// child-creation path parameter (id-or-slug) to its parent's real id.
+func seedSquad(store *memoryStore, id string) {
+	store.records[recordKey("squad", id)] = Record{ID: id, Kind: "squad", Status: "ACTIVE", Revision: 1, Data: map[string]any{"name": id}}
+}
+func seedTribe(store *memoryStore, id string) {
+	store.records[recordKey("tribe", id)] = Record{ID: id, Kind: "tribe", Status: "ACTIVE", Revision: 1, Data: map[string]any{"name": id}}
+}
+func seedFitnessFunction(store *memoryStore, id string) {
+	store.functions[id] = &fitness.Function{ID: id}
+}
 func (m *memoryStore) Ping(context.Context) error {
 	return m.pingErr
 }
@@ -236,7 +250,8 @@ func fixture(t *testing.T, mode fitness.AcquisitionMode) (*Service, *memoryStore
 	}
 	collector := &testCollector{value: 100}
 	service := NewService(store, &testIDs{}, testClock{now}, collector)
-	fn, err := service.CreateFitnessFunction(context.Background(), "squad", appDefinition(mode))
+	seedSquad(store, "squad")
+	fn, err := service.CreateFitnessFunction(context.Background(), "squad", appDefinition(mode), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,14 +434,15 @@ func TestServiceValidationFailures(t *testing.T) {
 	store := newMemoryStore()
 	service := NewService(store, &testIDs{}, testClock{time.Now()}, &testCollector{})
 	ctx := context.Background()
-	if _, err := service.CreateFitnessFunction(ctx, "squad", appDefinition(fitness.Push)); !errors.Is(err, fitness.ErrInvalidDefinition) {
+	seedSquad(store, "squad")
+	if _, err := service.CreateFitnessFunction(ctx, "squad", appDefinition(fitness.Push), ""); !errors.Is(err, fitness.ErrInvalidDefinition) {
 		t.Fatal("unowned target accepted")
 	}
 	if _, _, err := service.Submit(ctx, "missing", Submission{ProducerID: "p", ExternalRunID: "r"}); !errors.Is(err, ErrNotFound) {
 		t.Fatal("missing function not reported")
 	}
 	store.records[recordKey("fitness-target", "target")] = Record{ID: "target", ParentID: "squad", Kind: "fitness-target"}
-	fn, err := service.CreateFitnessFunction(ctx, "squad", appDefinition(fitness.Push))
+	fn, err := service.CreateFitnessFunction(ctx, "squad", appDefinition(fitness.Push), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,6 +473,8 @@ func TestCreateRecordKindStatuses(t *testing.T) {
 	store := newMemoryStore()
 	service := NewService(store, &testIDs{}, testClock{time.Now()}, &testCollector{})
 	ctx := context.Background()
+	seedSquad(store, "parent")
+	seedFitnessFunction(store, "parent")
 
 	cases := []struct {
 		kind string
@@ -469,7 +487,7 @@ func TestCreateRecordKindStatuses(t *testing.T) {
 		{"source-connection-check", "ACTIVE"},
 	}
 	for _, tc := range cases {
-		record, err := service.CreateRecord(ctx, tc.kind, "parent", map[string]any{"k": "v"})
+		record, err := service.CreateRecord(ctx, tc.kind, "parent", map[string]any{"k": "v", "name": tc.kind})
 		if err != nil {
 			t.Fatalf("create %s: %v", tc.kind, err)
 		}
@@ -484,6 +502,7 @@ func TestCreateRecordKindStatuses(t *testing.T) {
 	if _, err := service.TransitionRecord(ctx, "missing", "nope", "ARCHIVED", nil); !errors.Is(err, ErrNotFound) {
 		t.Fatal("transition on missing record accepted")
 	}
+	seedTribe(store, "tribe-1")
 	squad, err := service.CreateRecord(ctx, "squad", "tribe-1", map[string]any{"name": "S"})
 	if err != nil {
 		t.Fatal(err)
@@ -501,12 +520,13 @@ func TestServiceStoreFailurePaths(t *testing.T) {
 	boom := errors.New("boom")
 
 	store.ownedErr = boom
-	if _, err := service.CreateFitnessFunction(ctx, "squad", appDefinition(fitness.Push)); !errors.Is(err, boom) {
+	seedSquad(store, "squad")
+	if _, err := service.CreateFitnessFunction(ctx, "squad", appDefinition(fitness.Push), ""); !errors.Is(err, boom) {
 		t.Fatal("owned-target failure not propagated on create")
 	}
 	store.ownedErr = nil
 	store.records[recordKey("fitness-target", "target")] = Record{ID: "target", ParentID: "squad", Kind: "fitness-target"}
-	fn, err := service.CreateFitnessFunction(ctx, "squad", appDefinition(fitness.Push))
+	fn, err := service.CreateFitnessFunction(ctx, "squad", appDefinition(fitness.Push), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -710,7 +730,8 @@ func TestUpdateFitnessVersionSaveFailure(t *testing.T) {
 	service := NewService(store, &testIDs{}, testClock{time.Now()}, &testCollector{})
 	ctx := context.Background()
 	store.records[recordKey("fitness-target", "target")] = Record{ID: "target", ParentID: "squad", Kind: "fitness-target"}
-	fn, err := service.CreateFitnessFunction(ctx, "squad", appDefinition(fitness.Push))
+	seedSquad(store, "squad")
+	fn, err := service.CreateFitnessFunction(ctx, "squad", appDefinition(fitness.Push), "")
 	if err != nil {
 		t.Fatal(err)
 	}

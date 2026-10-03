@@ -32,6 +32,12 @@ web-install:
 web-test:
 	cd web && npm run test && npm run lint
 
+web-integration:
+	cd web && npm run test:integration
+
+web-e2e:
+	cd web && npm run test:e2e
+
 web-build:
 	cd web && npm run build
 

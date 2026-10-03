@@ -77,8 +77,8 @@ externalDocs:
   description: Polaris domain and REST API specification (polaris.md)
 servers:
   - url: /api/v1
-    description: Version 1 API served by the Polaris control plane. A development Prometheus
-      instance and PostgreSQL run alongside; see the README for the local Docker Compose stack.
+    description: Version 1 API served by the Polaris control plane. PostgreSQL runs alongside;
+      see the README for the local Docker Compose stack.
 security:
   - googleOidc: []
 tags:
@@ -254,6 +254,7 @@ paths:
               schema: { $ref: "#/components/schemas/Tribe" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
   /tribes/{tribeId}:
     get:
       operationId: getTribe
@@ -331,6 +332,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
   /squads/{squadId}:
     get:
       operationId: getSquad
@@ -647,11 +649,14 @@ paths:
         thresholds milder than failure thresholds when both are declared, targets owned by
         the squad, acquisition consistency (push needs a declared producer, pull needs a
         source and at least one query per criterion), and finite threshold values. The
-        function lifecycle starts as `DRAFT`; activation is a separate, explicit step.
+        function lifecycle starts as `DRAFT`; activation is a separate, explicit step. The
+        fitness function's `slug` is set once here (defaulted from `name` or explicitly
+        overridden) and is independent of the definition's own `name`, which can change in
+        later versions.
       parameters:
         - $ref: "#/components/parameters/SquadId"
       requestBody:
-        $ref: "#/components/requestBodies/FitnessDefinition"
+        $ref: "#/components/requestBodies/CreateFitnessFunctionRequest"
       responses:
         "201":
           description: |
@@ -666,6 +671,7 @@ paths:
               schema: { $ref: "#/components/schemas/FitnessFunction" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
   /fitness-functions/{fitnessFunctionId}:
     get:
@@ -829,6 +835,21 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
   /squads/{squadId}/measurement-producers:
+    get:
+      operationId: listMeasurementProducers
+      tags: [Measurement Producers]
+      summary: List a squad's measurement producers.
+      description: Returns the squad's registered push identities, oldest first.
+      parameters:
+        - $ref: "#/components/parameters/SquadId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of measurement producers.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeasurementProducerPage" }
     post:
       operationId: createMeasurementProducer
       tags: [Measurement Producers]
@@ -1360,14 +1381,14 @@ components:
       name: tribeId
       in: path
       required: true
-      description: Identifier of the tribe.
-      schema: { $ref: "#/components/schemas/Id" }
+      description: Identifier of the tribe — its `Id` (UUID) or its `Slug`.
+      schema: { $ref: "#/components/schemas/IdOrSlug" }
     SquadId:
       name: squadId
       in: path
       required: true
-      description: Identifier of the squad.
-      schema: { $ref: "#/components/schemas/Id" }
+      description: Identifier of the squad — its `Id` (UUID) or its `Slug`, scoped to its tribe.
+      schema: { $ref: "#/components/schemas/IdOrSlug" }
     TargetId:
       name: targetId
       in: path
@@ -1384,8 +1405,8 @@ components:
       name: fitnessFunctionId
       in: path
       required: true
-      description: Identifier of the fitness function.
-      schema: { $ref: "#/components/schemas/Id" }
+      description: Identifier of the fitness function — its `Id` (UUID) or its `Slug`, scoped to its owning squad.
+      schema: { $ref: "#/components/schemas/IdOrSlug" }
     Version:
       name: version
       in: path
@@ -1443,6 +1464,25 @@ components:
       format: uuid
       description: Opaque resource identifier (UUID).
       example: 01984361-4f3a-7abc-9f0e-2b2a6d5f1c22
+    Slug:
+      type: string
+      pattern: '^[a-z0-9]+(-[a-z0-9]+)*$'
+      minLength: 1
+      maxLength: 63
+      description: |
+        Human-readable alternate identifier. Defaults to a kebab-case derivation of `name`
+        when omitted on create; immutable once set. Scoped uniqueness depends on the kind
+        (see each resource's description) — never globally unique across kinds.
+      example: code-quality
+    IdOrSlug:
+      type: string
+      minLength: 1
+      maxLength: 63
+      description: |
+        Either the resource's `Id` (UUID) or its `Slug`. A slug can never parse as a UUID, so
+        the server disambiguates the two forms unambiguously; `404` semantics are identical
+        for both.
+      example: code-quality
     Health:
       type: object
       required: [status]
@@ -1548,6 +1588,9 @@ components:
           description: "A tribe: a group of squads sharing strategic context."
           properties:
             kind: { type: string, enum: [tribe] }
+            slug:
+              allOf: [{ $ref: "#/components/schemas/Slug" }]
+              description: Unique across all tribes. Immutable once set.
             status:
               type: string
               enum: [ACTIVE, ARCHIVED]
@@ -1582,6 +1625,9 @@ components:
           description: A squad within exactly one tribe (`parentId`); owns targets, sources, and fitness functions.
           properties:
             kind: { type: string, enum: [squad] }
+            slug:
+              allOf: [{ $ref: "#/components/schemas/Slug" }]
+              description: Unique within its tribe. Immutable once set.
             status: { type: string, enum: [ACTIVE] }
             data:
               type: object
@@ -1769,6 +1815,14 @@ components:
                   type: string
                   maxLength: 2000
                   description: What the producer measures.
+    MeasurementProducerPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/MeasurementProducer" }
     EvaluationRequest:
       allOf:
         - $ref: "#/components/schemas/ResourceRecord"
@@ -2174,6 +2228,12 @@ components:
         `If-Match` for version mutations.
       properties:
         id: { $ref: "#/components/schemas/Id" }
+        slug:
+          allOf: [{ $ref: "#/components/schemas/Slug" }]
+          description: |
+            Unique within the owning squad. Set once from the initial (version-1) definition's
+            name, or an explicit override on create; later versions' `name` changes never
+            affect it. Immutable.
         ownerSquadId:
           allOf: [{ $ref: "#/components/schemas/Id" }]
           description: Squad that owns the function; ownership never transfers to the tribe.
@@ -2531,6 +2591,9 @@ components:
                 maxLength: 200
                 description: Tribe name.
                 example: Commerce
+              slug:
+                allOf: [{ $ref: "#/components/schemas/Slug" }]
+                description: Defaults to a kebab-case derivation of `name` when omitted. Immutable once set.
               description:
                 type: string
                 maxLength: 2000
@@ -2566,6 +2629,9 @@ components:
                 maxLength: 200
                 description: Squad name.
                 example: Checkout
+              slug:
+                allOf: [{ $ref: "#/components/schemas/Slug" }]
+                description: Defaults to a kebab-case derivation of `name` when omitted; unique within the tribe. Immutable once set.
               mission:
                 type: string
                 maxLength: 2000
@@ -2750,6 +2816,21 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/FitnessDefinition" }
+    CreateFitnessFunctionRequest:
+      required: true
+      description: |
+        New fitness function: a complete definition (draft version 1) plus the aggregate-level
+        `slug`, which — unlike everything else here — is independent of future versions.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/FitnessDefinition"
+              - type: object
+                properties:
+                  slug:
+                    allOf: [{ $ref: "#/components/schemas/Slug" }]
+                    description: Defaults to a kebab-case derivation of `name` when omitted; unique within the squad. Immutable once set.
     MeasurementSubmission:
       required: true
       description: Measurement submission for one pipeline run.
