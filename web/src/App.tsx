@@ -30,6 +30,7 @@ import { currentUser, onAuthChange, signOut, type GoogleUser } from "./auth";
 import { CreateFitnessFunction } from "./components/CreateFitnessFunction";
 import { FitnessDetails } from "./components/FitnessDetails";
 import { ProducersWorkspace } from "./components/ProducersWorkspace";
+import { SettingsWorkspace } from "./components/SettingsWorkspace";
 import { SetupWorkspace } from "./components/SetupWorkspace";
 import { SignIn } from "./components/SignIn";
 import { SourcesWorkspace } from "./components/SourcesWorkspace";
@@ -38,13 +39,14 @@ import type { AcquisitionMode, Catalog, Enforcement, FitnessFunction, Lifecycle 
 import { activeDefinition, initials, matchesQuery, relativeTime } from "./utils";
 
 type FilterValue<T extends string> = T | "ALL";
-type WorkspaceView = "functions" | "targets" | "sources" | "producers";
+type WorkspaceView = "functions" | "targets" | "sources" | "producers" | "settings";
 
 const breadcrumbs: Record<WorkspaceView, string> = {
   functions: "Fitness functions",
   targets: "Fitness targets",
   sources: "Measurement sources",
   producers: "Measurement producers",
+  settings: "Settings",
 };
 
 export function App() {
@@ -140,7 +142,7 @@ export function App() {
         </nav>
         <div className="sidebar-footer">
           <div className="system-state"><span /><div><strong>Polaris operational</strong><small>API connected</small></div></div>
-          <button disabled title="Settings are planned"><Settings size={17} /> Settings <em>Soon</em></button>
+          <button className={clsx(view === "settings" && "active")} onClick={() => setView("settings")}><Settings size={17} /> Settings</button>
         </div>
       </aside>
 
@@ -269,6 +271,9 @@ export function App() {
         {view === "targets" && catalog && <TargetsWorkspace catalog={catalog} />}
         {view === "sources" && catalog && <SourcesWorkspace catalog={catalog} />}
         {view === "producers" && catalog && <ProducersWorkspace catalog={catalog} />}
+        {view === "settings" && catalog && (
+          <SettingsWorkspace catalog={catalog} onCreated={() => void catalogQuery.refetch()} />
+        )}
       </main>
 
       {selected && catalog && <FitnessDetails item={selected} catalog={catalog} onClose={() => setSelectedId(undefined)} />}

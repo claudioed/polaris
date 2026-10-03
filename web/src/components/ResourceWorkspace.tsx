@@ -77,7 +77,7 @@ export function ResourceWorkspace<T extends ResourceRecord>({
         <section className="empty-state onboarding-empty">
           <div>{icon}</div>
           <h2>Set up a squad first</h2>
-          <p>{title} belong to a squad. Create one from the Fitness functions workspace.</p>
+          <p>{title} belong to a squad. Create one from Settings.</p>
         </section>
       ) : (
         <section className="catalog-panel">
