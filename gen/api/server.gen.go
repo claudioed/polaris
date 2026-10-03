@@ -915,6 +915,27 @@ func (e WaiverTransition) Valid() bool {
 	}
 }
 
+// Defines values for CreateFitnessFunctionRequestEnforcement.
+const (
+	CreateFitnessFunctionRequestEnforcementBLOCK   CreateFitnessFunctionRequestEnforcement = "BLOCK"
+	CreateFitnessFunctionRequestEnforcementOBSERVE CreateFitnessFunctionRequestEnforcement = "OBSERVE"
+	CreateFitnessFunctionRequestEnforcementWARN    CreateFitnessFunctionRequestEnforcement = "WARN"
+)
+
+// Valid indicates whether the value is a known member of the CreateFitnessFunctionRequestEnforcement enum.
+func (e CreateFitnessFunctionRequestEnforcement) Valid() bool {
+	switch e {
+	case CreateFitnessFunctionRequestEnforcementBLOCK:
+		return true
+	case CreateFitnessFunctionRequestEnforcementOBSERVE:
+		return true
+	case CreateFitnessFunctionRequestEnforcementWARN:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CreateMeasurementSourceRequestProviderType.
 const (
 	CreateMeasurementSourceRequestProviderTypePROMETHEUS CreateMeasurementSourceRequestProviderType = "PROMETHEUS"
@@ -966,6 +987,27 @@ func (e TransitionFitnessTargetJSONBodyStatus) Valid() bool {
 	case TransitionFitnessTargetJSONBodyStatusDEPRECATED:
 		return true
 	case TransitionFitnessTargetJSONBodyStatusRETIRED:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CreateFitnessFunctionJSONBodyEnforcement.
+const (
+	CreateFitnessFunctionJSONBodyEnforcementBLOCK   CreateFitnessFunctionJSONBodyEnforcement = "BLOCK"
+	CreateFitnessFunctionJSONBodyEnforcementOBSERVE CreateFitnessFunctionJSONBodyEnforcement = "OBSERVE"
+	CreateFitnessFunctionJSONBodyEnforcementWARN    CreateFitnessFunctionJSONBodyEnforcement = "WARN"
+)
+
+// Valid indicates whether the value is a known member of the CreateFitnessFunctionJSONBodyEnforcement enum.
+func (e CreateFitnessFunctionJSONBodyEnforcement) Valid() bool {
+	switch e {
+	case CreateFitnessFunctionJSONBodyEnforcementBLOCK:
+		return true
+	case CreateFitnessFunctionJSONBodyEnforcementOBSERVE:
+		return true
+	case CreateFitnessFunctionJSONBodyEnforcementWARN:
 		return true
 	default:
 		return false
@@ -1451,6 +1493,11 @@ type FitnessFunction struct {
 	// Example: 4
 	Revision int `json:"revision"`
 
+	// Slug Unique within the owning squad. Set once from the initial (version-1) definition's
+	// name, or an explicit override on create; later versions' `name` changes never
+	// affect it. Immutable.
+	Slug *Slug `json:"slug,omitempty"`
+
 	// Versions Full version history in creation order.
 	Versions []FitnessVersion `json:"versions"`
 }
@@ -1681,6 +1728,13 @@ type HealthStatus string
 //
 // Example: 01984361-4f3a-7abc-9f0e-2b2a6d5f1c22
 type Id = openapi_types.UUID
+
+// IdOrSlug Either the resource's `Id` (UUID) or its `Slug`. A slug can never parse as a UUID, so
+// the server disambiguates the two forms unambiguously; `404` semantics are identical
+// for both.
+//
+// Example: code-quality
+type IdOrSlug = string
 
 // Measurement One measured value bound to a criterion key.
 type Measurement struct {
@@ -2120,6 +2174,13 @@ type ResourceRecordPage struct {
 	NextCursor *string `json:"nextCursor,omitempty"`
 }
 
+// Slug Human-readable alternate identifier. Defaults to a kebab-case derivation of `name`
+// when omitted on create; immutable once set. Scoped uniqueness depends on the kind
+// (see each resource's description) — never globally unique across kinds.
+//
+// Example: code-quality
+type Slug = string
+
 // SourceConnectionCheck defines model for SourceConnectionCheck.
 type SourceConnectionCheck struct {
 	// CreatedAt Creation time (UTC).
@@ -2190,8 +2251,11 @@ type Squad struct {
 	// Revision Monotonic change counter, starting at 1.
 	//
 	// Example: 3
-	Revision int64        `json:"revision"`
-	Status   *SquadStatus `json:"status,omitempty"`
+	Revision int64 `json:"revision"`
+
+	// Slug Unique within its tribe. Immutable once set.
+	Slug   *Slug        `json:"slug,omitempty"`
+	Status *SquadStatus `json:"status,omitempty"`
 
 	// UpdatedAt Last change time (UTC).
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -2352,6 +2416,9 @@ type Tribe struct {
 	// Example: 3
 	Revision int64 `json:"revision"`
 
+	// Slug Unique across all tribes. Immutable once set.
+	Slug *Slug `json:"slug,omitempty"`
+
 	// Status `ARCHIVED` tribes remain queryable for history.
 	Status *TribeStatus `json:"status,omitempty"`
 
@@ -2452,10 +2519,12 @@ type Cursor = string
 // Example: 01984361-4f3a-7abc-9f0e-2b2a6d5f1c22
 type EvaluationId = Id
 
-// FitnessFunctionId Opaque resource identifier (UUID).
+// FitnessFunctionId Either the resource's `Id` (UUID) or its `Slug`. A slug can never parse as a UUID, so
+// the server disambiguates the two forms unambiguously; `404` semantics are identical
+// for both.
 //
-// Example: 01984361-4f3a-7abc-9f0e-2b2a6d5f1c22
-type FitnessFunctionId = Id
+// Example: code-quality
+type FitnessFunctionId = IdOrSlug
 
 // IdempotencyKey defines model for IdempotencyKey.
 type IdempotencyKey = string
@@ -2476,10 +2545,12 @@ type RequestId = Id
 // Example: 01984361-4f3a-7abc-9f0e-2b2a6d5f1c22
 type SourceId = Id
 
-// SquadId Opaque resource identifier (UUID).
+// SquadId Either the resource's `Id` (UUID) or its `Slug`. A slug can never parse as a UUID, so
+// the server disambiguates the two forms unambiguously; `404` semantics are identical
+// for both.
 //
-// Example: 01984361-4f3a-7abc-9f0e-2b2a6d5f1c22
-type SquadId = Id
+// Example: code-quality
+type SquadId = IdOrSlug
 
 // TargetId Opaque resource identifier (UUID).
 //
@@ -2491,10 +2562,12 @@ type TargetId = Id
 // Example: 01984361-4f3a-7abc-9f0e-2b2a6d5f1c22
 type TemplateId = Id
 
-// TribeId Opaque resource identifier (UUID).
+// TribeId Either the resource's `Id` (UUID) or its `Slug`. A slug can never parse as a UUID, so
+// the server disambiguates the two forms unambiguously; `404` semantics are identical
+// for both.
 //
-// Example: 01984361-4f3a-7abc-9f0e-2b2a6d5f1c22
-type TribeId = Id
+// Example: code-quality
+type TribeId = IdOrSlug
 
 // Version defines model for Version.
 type Version = int
@@ -2552,6 +2625,70 @@ type ArchiveRequest struct {
 	// Example: Commerce capabilities moved to a new operating model
 	Reason *string `json:"reason,omitempty"`
 }
+
+// CreateFitnessFunctionRequest defines model for CreateFitnessFunctionRequest.
+type CreateFitnessFunctionRequest struct {
+	// Acquisition How measurements are acquired for the definition, discriminated by `mode`.
+	Acquisition Acquisition `json:"acquisition"`
+
+	// ChangeRationale Why the definition changed; recorded with new and updated versions.
+	//
+	// Example: Peak traffic has doubled and the recovery objective is stricter
+	ChangeRationale *string `json:"changeRationale,omitempty"`
+
+	// Characteristic Architectural characteristic being protected (e.g. from ISO/IEC 25010:
+	// RELIABILITY, PERFORMANCE, MAINTAINABILITY, SECURITY).
+	//
+	//
+	// Example: RELIABILITY
+	Characteristic *string `json:"characteristic,omitempty"`
+
+	// Criteria Acceptance criteria evaluated on every measurement set.
+	Criteria []Criterion `json:"criteria"`
+
+	// Enforcement Response when the function is not satisfied: `OBSERVE` records only, `WARN`
+	// demands attention (`ATTENTION_REQUIRED` disposition), `BLOCK` gates delivery
+	// (`BLOCKED` disposition, subject to approved waivers).
+	//
+	//
+	// Example: BLOCK
+	Enforcement CreateFitnessFunctionRequestEnforcement `json:"enforcement"`
+
+	// FreshnessSeconds How long an evaluation stays fresh. An evaluation's `validUntil` equals its
+	// `observedAt` plus this value; beyond it the function is stale.
+	//
+	//
+	// Example: 2592000
+	FreshnessSeconds int `json:"freshnessSeconds"`
+
+	// Name Short, stable name of the fitness function.
+	//
+	// Example: Checkout remains available during one instance loss
+	Name string `json:"name"`
+
+	// Objective The observable state that counts as fit.
+	//
+	// Example: Customers can complete checkout while one Checkout API instance is unavailable.
+	Objective string `json:"objective"`
+
+	// Purpose Why this characteristic matters to the business.
+	//
+	// Example: Protect completed purchases and revenue during routine infrastructure failures
+	Purpose string `json:"purpose"`
+
+	// Slug Defaults to a kebab-case derivation of `name` when omitted; unique within the squad. Immutable once set.
+	Slug *Slug `json:"slug,omitempty"`
+
+	// TargetIds Scope: the targets this function protects. All must be owned by the owning squad.
+	TargetIds []Id `json:"targetIds"`
+}
+
+// CreateFitnessFunctionRequestEnforcement Response when the function is not satisfied: `OBSERVE` records only, `WARN`
+// demands attention (`ATTENTION_REQUIRED` disposition), `BLOCK` gates delivery
+// (`BLOCKED` disposition, subject to approved waivers).
+//
+// Example: BLOCK
+type CreateFitnessFunctionRequestEnforcement string
 
 // CreateFitnessTargetRequest defines model for CreateFitnessTargetRequest.
 type CreateFitnessTargetRequest struct {
@@ -2639,6 +2776,9 @@ type CreateSquadRequest struct {
 	//
 	// Example: Checkout
 	Name string `json:"name"`
+
+	// Slug Defaults to a kebab-case derivation of `name` when omitted; unique within the tribe. Immutable once set.
+	Slug *Slug `json:"slug,omitempty"`
 }
 
 // CreateTemplateRequest defines model for CreateTemplateRequest.
@@ -2669,6 +2809,9 @@ type CreateTribeRequest struct {
 	//
 	// Example: Commerce
 	Name string `json:"name"`
+
+	// Slug Defaults to a kebab-case derivation of `name` when omitted. Immutable once set.
+	Slug *Slug `json:"slug,omitempty"`
 }
 
 // CreateWaiverRequest defines model for CreateWaiverRequest.
@@ -3006,6 +3149,66 @@ type ListFitnessFunctionsParams struct {
 	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// CreateFitnessFunctionJSONBody defines parameters for CreateFitnessFunction.
+type CreateFitnessFunctionJSONBody struct {
+	// Acquisition How measurements are acquired for the definition, discriminated by `mode`.
+	Acquisition Acquisition `json:"acquisition"`
+
+	// ChangeRationale Why the definition changed; recorded with new and updated versions.
+	//
+	// Example: Peak traffic has doubled and the recovery objective is stricter
+	ChangeRationale *string `json:"changeRationale,omitempty"`
+
+	// Characteristic Architectural characteristic being protected (e.g. from ISO/IEC 25010:
+	// RELIABILITY, PERFORMANCE, MAINTAINABILITY, SECURITY).
+	//
+	//
+	// Example: RELIABILITY
+	Characteristic *string `json:"characteristic,omitempty"`
+
+	// Criteria Acceptance criteria evaluated on every measurement set.
+	Criteria []Criterion `json:"criteria"`
+
+	// Enforcement Response when the function is not satisfied: `OBSERVE` records only, `WARN`
+	// demands attention (`ATTENTION_REQUIRED` disposition), `BLOCK` gates delivery
+	// (`BLOCKED` disposition, subject to approved waivers).
+	//
+	//
+	// Example: BLOCK
+	Enforcement CreateFitnessFunctionJSONBodyEnforcement `json:"enforcement"`
+
+	// FreshnessSeconds How long an evaluation stays fresh. An evaluation's `validUntil` equals its
+	// `observedAt` plus this value; beyond it the function is stale.
+	//
+	//
+	// Example: 2592000
+	FreshnessSeconds int `json:"freshnessSeconds"`
+
+	// Name Short, stable name of the fitness function.
+	//
+	// Example: Checkout remains available during one instance loss
+	Name string `json:"name"`
+
+	// Objective The observable state that counts as fit.
+	//
+	// Example: Customers can complete checkout while one Checkout API instance is unavailable.
+	Objective string `json:"objective"`
+
+	// Purpose Why this characteristic matters to the business.
+	//
+	// Example: Protect completed purchases and revenue during routine infrastructure failures
+	Purpose string `json:"purpose"`
+
+	// Slug Defaults to a kebab-case derivation of `name` when omitted; unique within the squad. Immutable once set.
+	Slug *Slug `json:"slug,omitempty"`
+
+	// TargetIds Scope: the targets this function protects. All must be owned by the owning squad.
+	TargetIds []Id `json:"targetIds"`
+}
+
+// CreateFitnessFunctionJSONBodyEnforcement defines parameters for CreateFitnessFunction.
+type CreateFitnessFunctionJSONBodyEnforcement string
+
 // ListFitnessTargetsParams defines parameters for ListFitnessTargets.
 type ListFitnessTargetsParams struct {
 	// Cursor Opaque pagination cursor obtained from a previous response's `nextCursor`. Absent
@@ -3145,6 +3348,9 @@ type CreateTribeJSONBody struct {
 	//
 	// Example: Commerce
 	Name string `json:"name"`
+
+	// Slug Defaults to a kebab-case derivation of `name` when omitted. Immutable once set.
+	Slug *Slug `json:"slug,omitempty"`
 }
 
 // ArchiveTribeJSONBody defines parameters for ArchiveTribe.
@@ -3207,6 +3413,9 @@ type CreateSquadJSONBody struct {
 	//
 	// Example: Checkout
 	Name string `json:"name"`
+
+	// Slug Defaults to a kebab-case derivation of `name` when omitted; unique within the tribe. Immutable once set.
+	Slug *Slug `json:"slug,omitempty"`
 }
 
 // TransitionWaiverJSONBody defines parameters for TransitionWaiver.
@@ -3263,7 +3472,7 @@ type RetireMeasurementSourceJSONRequestBody RetireMeasurementSourceJSONBody
 type SubmitMeasurementBatchJSONRequestBody = MeasurementBatchRequest
 
 // CreateFitnessFunctionJSONRequestBody defines body for CreateFitnessFunction for application/json ContentType.
-type CreateFitnessFunctionJSONRequestBody = FitnessDefinition
+type CreateFitnessFunctionJSONRequestBody CreateFitnessFunctionJSONBody
 
 // CreateFitnessTargetJSONRequestBody defines body for CreateFitnessTarget for application/json ContentType.
 type CreateFitnessTargetJSONRequestBody CreateFitnessTargetJSONBody
@@ -4149,7 +4358,7 @@ func (siw *ServerInterfaceWrapper) GetFitnessFunction(w http.ResponseWriter, r *
 	// ------------- Path parameter "fitnessFunctionId" -------------
 	var fitnessFunctionId FitnessFunctionId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fitnessFunctionId", Err: err})
 		return
@@ -4175,7 +4384,7 @@ func (siw *ServerInterfaceWrapper) ListCollectionAttempts(w http.ResponseWriter,
 	// ------------- Path parameter "fitnessFunctionId" -------------
 	var fitnessFunctionId FitnessFunctionId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fitnessFunctionId", Err: err})
 		return
@@ -4230,7 +4439,7 @@ func (siw *ServerInterfaceWrapper) CreateCollectionAttempt(w http.ResponseWriter
 	// ------------- Path parameter "fitnessFunctionId" -------------
 	var fitnessFunctionId FitnessFunctionId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fitnessFunctionId", Err: err})
 		return
@@ -4280,7 +4489,7 @@ func (siw *ServerInterfaceWrapper) CreateEvaluationRequest(w http.ResponseWriter
 	// ------------- Path parameter "fitnessFunctionId" -------------
 	var fitnessFunctionId FitnessFunctionId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fitnessFunctionId", Err: err})
 		return
@@ -4306,7 +4515,7 @@ func (siw *ServerInterfaceWrapper) ListEvaluations(w http.ResponseWriter, r *htt
 	// ------------- Path parameter "fitnessFunctionId" -------------
 	var fitnessFunctionId FitnessFunctionId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fitnessFunctionId", Err: err})
 		return
@@ -4361,7 +4570,7 @@ func (siw *ServerInterfaceWrapper) SubmitMeasurements(w http.ResponseWriter, r *
 	// ------------- Path parameter "fitnessFunctionId" -------------
 	var fitnessFunctionId FitnessFunctionId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fitnessFunctionId", Err: err})
 		return
@@ -4411,7 +4620,7 @@ func (siw *ServerInterfaceWrapper) RetireFitnessFunction(w http.ResponseWriter, 
 	// ------------- Path parameter "fitnessFunctionId" -------------
 	var fitnessFunctionId FitnessFunctionId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fitnessFunctionId", Err: err})
 		return
@@ -4437,7 +4646,7 @@ func (siw *ServerInterfaceWrapper) ListFitnessFunctionVersions(w http.ResponseWr
 	// ------------- Path parameter "fitnessFunctionId" -------------
 	var fitnessFunctionId FitnessFunctionId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fitnessFunctionId", Err: err})
 		return
@@ -4463,7 +4672,7 @@ func (siw *ServerInterfaceWrapper) CreateFitnessFunctionVersion(w http.ResponseW
 	// ------------- Path parameter "fitnessFunctionId" -------------
 	var fitnessFunctionId FitnessFunctionId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fitnessFunctionId", Err: err})
 		return
@@ -4517,7 +4726,7 @@ func (siw *ServerInterfaceWrapper) UpdateFitnessFunctionVersion(w http.ResponseW
 	// ------------- Path parameter "fitnessFunctionId" -------------
 	var fitnessFunctionId FitnessFunctionId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fitnessFunctionId", Err: err})
 		return
@@ -4580,7 +4789,7 @@ func (siw *ServerInterfaceWrapper) ActivateFitnessFunctionVersion(w http.Respons
 	// ------------- Path parameter "fitnessFunctionId" -------------
 	var fitnessFunctionId FitnessFunctionId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fitnessFunctionId", Err: err})
 		return
@@ -4615,7 +4824,7 @@ func (siw *ServerInterfaceWrapper) ValidateFitnessFunctionVersion(w http.Respons
 	// ------------- Path parameter "fitnessFunctionId" -------------
 	var fitnessFunctionId FitnessFunctionId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fitnessFunctionId", Err: err})
 		return
@@ -4650,7 +4859,7 @@ func (siw *ServerInterfaceWrapper) CreateWaiver(w http.ResponseWriter, r *http.R
 	// ------------- Path parameter "fitnessFunctionId" -------------
 	var fitnessFunctionId FitnessFunctionId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "fitnessFunctionId", chi.URLParam(r, "fitnessFunctionId"), &fitnessFunctionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fitnessFunctionId", Err: err})
 		return
@@ -4993,7 +5202,7 @@ func (siw *ServerInterfaceWrapper) GetSquad(w http.ResponseWriter, r *http.Reque
 	// ------------- Path parameter "squadId" -------------
 	var squadId SquadId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "squadId", Err: err})
 		return
@@ -5019,7 +5228,7 @@ func (siw *ServerInterfaceWrapper) ListFitnessFunctions(w http.ResponseWriter, r
 	// ------------- Path parameter "squadId" -------------
 	var squadId SquadId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "squadId", Err: err})
 		return
@@ -5074,7 +5283,7 @@ func (siw *ServerInterfaceWrapper) CreateFitnessFunction(w http.ResponseWriter, 
 	// ------------- Path parameter "squadId" -------------
 	var squadId SquadId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "squadId", Err: err})
 		return
@@ -5100,7 +5309,7 @@ func (siw *ServerInterfaceWrapper) GetSquadFitnessOverview(w http.ResponseWriter
 	// ------------- Path parameter "squadId" -------------
 	var squadId SquadId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "squadId", Err: err})
 		return
@@ -5126,7 +5335,7 @@ func (siw *ServerInterfaceWrapper) ListFitnessTargets(w http.ResponseWriter, r *
 	// ------------- Path parameter "squadId" -------------
 	var squadId SquadId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "squadId", Err: err})
 		return
@@ -5181,7 +5390,7 @@ func (siw *ServerInterfaceWrapper) CreateFitnessTarget(w http.ResponseWriter, r 
 	// ------------- Path parameter "squadId" -------------
 	var squadId SquadId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "squadId", Err: err})
 		return
@@ -5207,7 +5416,7 @@ func (siw *ServerInterfaceWrapper) CreateMeasurementProducer(w http.ResponseWrit
 	// ------------- Path parameter "squadId" -------------
 	var squadId SquadId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "squadId", Err: err})
 		return
@@ -5233,7 +5442,7 @@ func (siw *ServerInterfaceWrapper) ListMeasurementSources(w http.ResponseWriter,
 	// ------------- Path parameter "squadId" -------------
 	var squadId SquadId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "squadId", Err: err})
 		return
@@ -5288,7 +5497,7 @@ func (siw *ServerInterfaceWrapper) CreateMeasurementSource(w http.ResponseWriter
 	// ------------- Path parameter "squadId" -------------
 	var squadId SquadId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "squadId", Err: err})
 		return
@@ -5338,7 +5547,7 @@ func (siw *ServerInterfaceWrapper) TransferSquad(w http.ResponseWriter, r *http.
 	// ------------- Path parameter "squadId" -------------
 	var squadId SquadId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "squadId", Err: err})
 		return
@@ -5424,7 +5633,7 @@ func (siw *ServerInterfaceWrapper) GetTribe(w http.ResponseWriter, r *http.Reque
 	// ------------- Path parameter "tribeId" -------------
 	var tribeId TribeId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "tribeId", chi.URLParam(r, "tribeId"), &tribeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "tribeId", chi.URLParam(r, "tribeId"), &tribeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tribeId", Err: err})
 		return
@@ -5450,7 +5659,7 @@ func (siw *ServerInterfaceWrapper) ArchiveTribe(w http.ResponseWriter, r *http.R
 	// ------------- Path parameter "tribeId" -------------
 	var tribeId TribeId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "tribeId", chi.URLParam(r, "tribeId"), &tribeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "tribeId", chi.URLParam(r, "tribeId"), &tribeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tribeId", Err: err})
 		return
@@ -5476,7 +5685,7 @@ func (siw *ServerInterfaceWrapper) ListFitnessFunctionTemplates(w http.ResponseW
 	// ------------- Path parameter "tribeId" -------------
 	var tribeId TribeId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "tribeId", chi.URLParam(r, "tribeId"), &tribeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "tribeId", chi.URLParam(r, "tribeId"), &tribeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tribeId", Err: err})
 		return
@@ -5531,7 +5740,7 @@ func (siw *ServerInterfaceWrapper) CreateFitnessFunctionTemplate(w http.Response
 	// ------------- Path parameter "tribeId" -------------
 	var tribeId TribeId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "tribeId", chi.URLParam(r, "tribeId"), &tribeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "tribeId", chi.URLParam(r, "tribeId"), &tribeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tribeId", Err: err})
 		return
@@ -5557,7 +5766,7 @@ func (siw *ServerInterfaceWrapper) GetTribeFitnessOverview(w http.ResponseWriter
 	// ------------- Path parameter "tribeId" -------------
 	var tribeId TribeId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "tribeId", chi.URLParam(r, "tribeId"), &tribeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "tribeId", chi.URLParam(r, "tribeId"), &tribeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tribeId", Err: err})
 		return
@@ -5583,7 +5792,7 @@ func (siw *ServerInterfaceWrapper) ListSquads(w http.ResponseWriter, r *http.Req
 	// ------------- Path parameter "tribeId" -------------
 	var tribeId TribeId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "tribeId", chi.URLParam(r, "tribeId"), &tribeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "tribeId", chi.URLParam(r, "tribeId"), &tribeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tribeId", Err: err})
 		return
@@ -5638,7 +5847,7 @@ func (siw *ServerInterfaceWrapper) CreateSquad(w http.ResponseWriter, r *http.Re
 	// ------------- Path parameter "tribeId" -------------
 	var tribeId TribeId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "tribeId", chi.URLParam(r, "tribeId"), &tribeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "tribeId", chi.URLParam(r, "tribeId"), &tribeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tribeId", Err: err})
 		return
@@ -8015,6 +8224,22 @@ func (response CreateFitnessFunction404ApplicationProblemPlusJSONResponse) Visit
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateFitnessFunction409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response CreateFitnessFunction409ApplicationProblemPlusJSONResponse) VisitCreateFitnessFunctionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
 	_, err := buf.WriteTo(w)
 	return err
 }
