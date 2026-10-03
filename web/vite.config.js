@@ -1,9 +1,12 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 export default defineConfig({
     plugins: [react()],
     test: {
         environment: "jsdom",
+        // Playwright owns tests/e2e and the integration tier has its own config;
+        // the unit run must not collect either.
+        exclude: [...configDefaults.exclude, "**/tests/e2e/**", "**/tests/integration/**"],
         environmentOptions: {
             jsdom: {
                 // Non-routable origin: a request that slips past MSW must fail with a
