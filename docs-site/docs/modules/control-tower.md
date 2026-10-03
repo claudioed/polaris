@@ -34,7 +34,10 @@ make web-build     # production build
 
 In Compose the tower is served at http://localhost:3000 behind nginx with security headers
 (`security-headers.conf`); the Google client ID is injected at build time via
-`VITE_GOOGLE_CLIENT_ID`.
+`VITE_GOOGLE_CLIENT_ID`. The content security policy allows only Polaris itself plus the
+Google Identity Services endpoints (`accounts.google.com`) and Google-hosted profile images
+(`*.googleusercontent.com`) — without these the browser blocks the GIS script and sign-in
+fails with "Failed to load Google Identity Services".
 
 ## CI
 
