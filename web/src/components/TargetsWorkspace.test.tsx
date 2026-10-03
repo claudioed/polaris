@@ -113,6 +113,20 @@ describe("TargetsWorkspace", () => {
     expect(await screen.findByText("Checkout API")).toBeInTheDocument();
   });
 
+  it("requires a target name before submitting", async () => {
+    server.use(
+      http.get("*/api/v1/squads/:squadId/fitness-targets", () => HttpResponse.json(page([]))),
+    );
+    renderWorkspace();
+    const user = userEvent.setup();
+
+    await screen.findByText("No fitness targets yet");
+    await user.click(screen.getAllByRole("button", { name: "New target" })[0]);
+    await user.click(screen.getByRole("button", { name: "Create target" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enter a target name.");
+  });
+
   it("closes the create dialog via the close icon and cancel button", async () => {
     server.use(
       http.get("*/api/v1/squads/:squadId/fitness-targets", () => HttpResponse.json(page([]))),
