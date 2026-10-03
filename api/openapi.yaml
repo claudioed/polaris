@@ -77,8 +77,8 @@ externalDocs:
   description: Polaris domain and REST API specification (polaris.md)
 servers:
   - url: /api/v1
-    description: Version 1 API served by the Polaris control plane. A development Prometheus
-      instance and PostgreSQL run alongside; see the README for the local Docker Compose stack.
+    description: Version 1 API served by the Polaris control plane. PostgreSQL runs alongside;
+      see the README for the local Docker Compose stack.
 security:
   - googleOidc: []
 tags:
