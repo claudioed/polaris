@@ -1812,6 +1812,18 @@ type MeasurementProducerKind string
 // MeasurementProducerStatus defines model for MeasurementProducer.Status.
 type MeasurementProducerStatus string
 
+// MeasurementProducerPage defines model for MeasurementProducerPage.
+type MeasurementProducerPage struct {
+	Items []MeasurementProducer `json:"items"`
+
+	// NextCursor Cursor for the next page. Absent when this page is the last one; pass the
+	// value back as the `cursor` query parameter.
+	//
+	//
+	// Example: 01984361-4f3a-7abc-9f0e-2b2a6d5f1c99
+	NextCursor *string `json:"nextCursor,omitempty"`
+}
+
 // MeasurementProviderType Capability descriptor for a supported pull provider.
 type MeasurementProviderType struct {
 	// AuthenticationModes Supported outbound authentication modes. Only `NONE` in v1.
@@ -3259,6 +3271,18 @@ type CreateFitnessTargetJSONBody struct {
 	TechnicalContacts *[]string `json:"technicalContacts,omitempty"`
 }
 
+// ListMeasurementProducersParams defines parameters for ListMeasurementProducers.
+type ListMeasurementProducersParams struct {
+	// Cursor Opaque pagination cursor obtained from a previous response's `nextCursor`. Absent
+	// or empty means "start from the oldest item". Never parse or reuse cursors across
+	// collections.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Maximum number of items to return (1-200). Values outside the range are clamped
+	// to the nearest bound rather than rejected. Defaults to 50.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // CreateMeasurementProducerJSONBody defines parameters for CreateMeasurementProducer.
 type CreateMeasurementProducerJSONBody struct {
 	// Description What the producer measures.
@@ -3721,6 +3745,9 @@ type ServerInterface interface {
 	// CreateFitnessTarget Register a fitness target.
 	// (POST /squads/{squadId}/fitness-targets)
 	CreateFitnessTarget(w http.ResponseWriter, r *http.Request, squadId SquadId)
+	// ListMeasurementProducers List a squad's measurement producers.
+	// (GET /squads/{squadId}/measurement-producers)
+	ListMeasurementProducers(w http.ResponseWriter, r *http.Request, squadId SquadId, params ListMeasurementProducersParams)
 	// CreateMeasurementProducer Register a measurement producer.
 	// (POST /squads/{squadId}/measurement-producers)
 	CreateMeasurementProducer(w http.ResponseWriter, r *http.Request, squadId SquadId)
@@ -4000,6 +4027,12 @@ func (_ Unimplemented) ListFitnessTargets(w http.ResponseWriter, r *http.Request
 // CreateFitnessTarget Register a fitness target.
 // (POST /squads/{squadId}/fitness-targets)
 func (_ Unimplemented) CreateFitnessTarget(w http.ResponseWriter, r *http.Request, squadId SquadId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListMeasurementProducers List a squad's measurement producers.
+// (GET /squads/{squadId}/measurement-producers)
+func (_ Unimplemented) ListMeasurementProducers(w http.ResponseWriter, r *http.Request, squadId SquadId, params ListMeasurementProducersParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -5407,6 +5440,61 @@ func (siw *ServerInterfaceWrapper) CreateFitnessTarget(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// ListMeasurementProducers operation middleware
+func (siw *ServerInterfaceWrapper) ListMeasurementProducers(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "squadId" -------------
+	var squadId SquadId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "squadId", chi.URLParam(r, "squadId"), &squadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "squadId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListMeasurementProducersParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListMeasurementProducers(w, r, squadId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreateMeasurementProducer operation middleware
 func (siw *ServerInterfaceWrapper) CreateMeasurementProducer(w http.ResponseWriter, r *http.Request) {
 
@@ -6104,6 +6192,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/fitness-functions/{fitnessFunctionId}/retirements", wrapper.RetireFitnessFunction)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/squads/{squadId}/measurement-producers", wrapper.ListMeasurementProducers)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/squads/{squadId}/measurement-producers", wrapper.CreateMeasurementProducer)
@@ -8386,6 +8477,29 @@ func (response CreateFitnessTarget409ApplicationProblemPlusJSONResponse) VisitCr
 	return err
 }
 
+type ListMeasurementProducersRequestObject struct {
+	SquadId SquadId `json:"squadId"`
+	Params  ListMeasurementProducersParams
+}
+
+type ListMeasurementProducersResponseObject interface {
+	VisitListMeasurementProducersResponse(w http.ResponseWriter) error
+}
+
+type ListMeasurementProducers200JSONResponse MeasurementProducerPage
+
+func (response ListMeasurementProducers200JSONResponse) VisitListMeasurementProducersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type CreateMeasurementProducerRequestObject struct {
 	SquadId SquadId `json:"squadId"`
 	Body    *CreateMeasurementProducerJSONRequestBody
@@ -9321,6 +9435,9 @@ type StrictServerInterface interface {
 	// CreateFitnessTarget Register a fitness target.
 	// (POST /squads/{squadId}/fitness-targets)
 	CreateFitnessTarget(ctx context.Context, request CreateFitnessTargetRequestObject) (CreateFitnessTargetResponseObject, error)
+	// ListMeasurementProducers List a squad's measurement producers.
+	// (GET /squads/{squadId}/measurement-producers)
+	ListMeasurementProducers(ctx context.Context, request ListMeasurementProducersRequestObject) (ListMeasurementProducersResponseObject, error)
 	// CreateMeasurementProducer Register a measurement producer.
 	// (POST /squads/{squadId}/measurement-producers)
 	CreateMeasurementProducer(ctx context.Context, request CreateMeasurementProducerRequestObject) (CreateMeasurementProducerResponseObject, error)
@@ -10539,6 +10656,33 @@ func (sh *strictHandler) CreateFitnessTarget(w http.ResponseWriter, r *http.Requ
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreateFitnessTargetResponseObject); ok {
 		if err := validResponse.VisitCreateFitnessTargetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListMeasurementProducers operation middleware
+func (sh *strictHandler) ListMeasurementProducers(w http.ResponseWriter, r *http.Request, squadId SquadId, params ListMeasurementProducersParams) {
+	var request ListMeasurementProducersRequestObject
+
+	request.SquadId = squadId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListMeasurementProducers(ctx, request.(ListMeasurementProducersRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListMeasurementProducers")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListMeasurementProducersResponseObject); ok {
+		if err := validResponse.VisitListMeasurementProducersResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

@@ -124,6 +124,13 @@ func (s *Store) ListRecords(ctx context.Context, kind, parentID string, limit in
 	case "measurement-source":
 		query = `SELECT id,''::text,squad_id::text,status,revision,created_at,updated_at,data || jsonb_build_object('name',name,'providerType',provider_type,'baseUrl',base_url) FROM measurement_sources WHERE ($1='' OR squad_id=$1::uuid) AND created_at>$2 ORDER BY created_at,id LIMIT $3`
 		args = []any{parentID, after, limit}
+	case "measurement-producer":
+		// measurement_producers has no status/revision/updated_at columns
+		// (see migrations/00001_initial.sql); producers are create-once,
+		// immutable records, so ACTIVE/revision 1/updated_at=created_at are
+		// synthesized to fit the generic Record shape.
+		query = `SELECT id,''::text,squad_id::text,'ACTIVE'::text,1,created_at,created_at,data FROM measurement_producers WHERE ($1='' OR squad_id=$1::uuid) AND created_at>$2 ORDER BY created_at,id LIMIT $3`
+		args = []any{parentID, after, limit}
 	}
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {

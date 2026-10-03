@@ -58,6 +58,7 @@ func (h *Handler) topologyRoutes(r chi.Router) {
 	r.Get("/api/v1/fitness-targets/{targetId}", h.get("fitness-target", "targetId"))
 	r.Post("/api/v1/fitness-targets/{targetId}/lifecycle-transitions", h.transitionFitnessTarget)
 	r.Post("/api/v1/squads/{squadId}/measurement-producers", h.createMeasurementProducer)
+	r.Get("/api/v1/squads/{squadId}/measurement-producers", h.list("measurement-producer", "squadId"))
 }
 
 func (h *Handler) sourceRoutes(r chi.Router) {

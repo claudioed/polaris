@@ -9,6 +9,7 @@ import {
   createFitnessTarget,
   createSquad,
   createTribe,
+  getSquadProducers,
   getSquadSources,
   getSquadTargets,
   loadCatalog,
@@ -31,6 +32,7 @@ vi.mock("./api", async (importOriginal) => {
     loadCatalog: vi.fn(),
     getSquadTargets: vi.fn(),
     getSquadSources: vi.fn(),
+    getSquadProducers: vi.fn(),
     createTribe: vi.fn(),
     createSquad: vi.fn(),
     createFitnessTarget: vi.fn(),
@@ -61,6 +63,7 @@ const mockedSignOut = vi.mocked(signOut);
 const mockedLoadCatalog = vi.mocked(loadCatalog);
 const mockedGetSquadTargets = vi.mocked(getSquadTargets);
 const mockedGetSquadSources = vi.mocked(getSquadSources);
+const mockedGetSquadProducers = vi.mocked(getSquadProducers);
 const mockedCreateTribe = vi.mocked(createTribe);
 const mockedCreateSquad = vi.mocked(createSquad);
 const mockedCreateFitnessTarget = vi.mocked(createFitnessTarget);
@@ -85,6 +88,7 @@ describe("Polaris control tower", () => {
     mockedLoadCatalog.mockResolvedValue(catalogFixture());
     mockedGetSquadTargets.mockResolvedValue({ items: [] });
     mockedGetSquadSources.mockResolvedValue({ items: [] });
+    mockedGetSquadProducers.mockResolvedValue({ items: [] });
     mockedCreateTribe.mockResolvedValue(tribeFixture({ id: "tribe-created" }));
     mockedCreateSquad.mockResolvedValue(squadFixture({ id: "squad-created" }));
     mockedCreateFitnessTarget.mockResolvedValue(
@@ -325,5 +329,52 @@ describe("Polaris control tower", () => {
     expect(mockedCreateSquad).toHaveBeenCalledTimes(1);
     expect(mockedCreateFitnessTarget).toHaveBeenCalledTimes(1);
     expect(mockedLoadCatalog).toHaveBeenCalledTimes(2);
+  });
+
+  it("switches to the Fitness targets, Measurement sources, and Producers workspaces", async () => {
+    renderApp();
+    const user = userEvent.setup();
+    await screen.findByText("Checkout availability");
+
+    expect(screen.getByRole("button", { name: /Evaluations/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Templates/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Waivers/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Settings/ })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: /Fitness targets/ }));
+    expect(await screen.findByRole("heading", { name: "Fitness targets" })).toBeInTheDocument();
+    expect(screen.getByText("Fitness targets", { selector: "strong" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Measurement sources/ }));
+    expect(await screen.findByRole("heading", { name: "Measurement sources" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^Producers/ }));
+    expect(await screen.findByRole("heading", { name: "Measurement producers" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Fitness functions/ }));
+    expect(await screen.findByText("Checkout availability")).toBeInTheDocument();
+  });
+
+  it("shows the offline state and loading state in non-functions workspaces too", async () => {
+    mockedLoadCatalog.mockReturnValueOnce(new Promise(() => undefined));
+    renderApp();
+    const user = userEvent.setup();
+    await screen.findByText("Connecting to Polaris");
+
+    await user.click(screen.getByRole("button", { name: /Fitness targets/ }));
+    expect(await screen.findByText("Connecting to Polaris")).toBeInTheDocument();
+  });
+
+  it("recovers from an offline catalog while viewing a non-functions workspace", async () => {
+    mockedLoadCatalog.mockRejectedValueOnce(new Error("connection refused"));
+    renderApp();
+    await screen.findByText("Control tower is offline");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Measurement sources/ }));
+    expect(await screen.findByText("Control tower is offline")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Retry/ }));
+    expect(await screen.findByRole("heading", { name: "Measurement sources" })).toBeInTheDocument();
   });
 });
