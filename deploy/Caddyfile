@@ -1,0 +1,17 @@
+# Caddy edge for the Polaris public domain.
+#
+# POLARIS_DOMAIN (from the environment) must have DNS pointing at this host.
+# Caddy obtains and renews a Let's Encrypt certificate automatically and
+# persists it in the caddy-data volume. Activate with:
+#
+#   docker compose --profile edge up -d
+
+{$POLARIS_DOMAIN} {
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	reverse_proxy control-tower:8080
+}
+
+# Optionally redirect www to the apex (requires DNS for the www host):
+#www.{$POLARIS_DOMAIN} {
+#	redir https://{$POLARIS_DOMAIN}{uri} permanent
+#}

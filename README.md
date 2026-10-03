@@ -60,6 +60,16 @@ go run ./cmd/polaris
 
 Database migrations run automatically and are safe to run again.
 
+### Public domain
+
+To serve the stack on a public domain over TLS, point DNS at the host, add the `https://<domain>` origin to the Google OAuth client, and activate the Caddy edge profile:
+
+```sh
+docker compose --profile edge up --build -d
+```
+
+The [deployment guide](https://claudioed.github.io/polaris/docs/introduction/deployment) covers DNS, OAuth origins, secrets, and wiring producers and `polaris-mcp` to the domain.
+
 ## Development
 
 ```sh
