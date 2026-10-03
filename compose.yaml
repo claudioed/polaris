@@ -15,14 +15,6 @@ services:
     volumes:
       - polaris-postgres:/var/lib/postgresql
 
-  prometheus:
-    image: prom/prometheus:v3.7.3
-    command: ["--config.file=/etc/prometheus/prometheus.yml"]
-    ports:
-      - "127.0.0.1:${POLARIS_PROMETHEUS_PORT:-9090}:9090"
-    volumes:
-      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-
   polaris:
     build: .
     environment:

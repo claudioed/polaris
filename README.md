@@ -47,14 +47,14 @@ Start the stack:
 docker compose up --build
 ```
 
-The control tower is available at `http://localhost:3000`. The API is available at `http://localhost:8080/api/v1`, its live contract at `http://localhost:8080/openapi.yaml`, PostgreSQL at port `5432`, and the development Prometheus instance at port `9090`.
+The control tower is available at `http://localhost:3000`. The API is available at `http://localhost:8080/api/v1`, its live contract at `http://localhost:8080/openapi.yaml`, and PostgreSQL at port `5432`.
 
-If one of those host ports is already in use, override `POLARIS_CONTROL_TOWER_PORT`, `POLARIS_HTTP_PORT`, `POLARIS_POSTGRES_PORT`, or `POLARIS_PROMETHEUS_PORT` in `.env`. The container ports and service-to-service addresses remain unchanged.
+If one of those host ports is already in use, override `POLARIS_CONTROL_TOWER_PORT`, `POLARIS_HTTP_PORT`, or `POLARIS_POSTGRES_PORT` in `.env`. The container ports and service-to-service addresses remain unchanged.
 
 To run the Go process outside Docker:
 
 ```sh
-docker compose up -d postgres prometheus
+docker compose up -d postgres
 go run ./cmd/polaris
 ```
 

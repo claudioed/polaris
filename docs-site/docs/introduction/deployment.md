@@ -52,10 +52,11 @@ Every other published port binds to `127.0.0.1` on the host:
 - **PostgreSQL** (`POLARIS_POSTGRES_PORT`) stays reachable only for local
   development, such as running `go run ./cmd/polaris` against the compose
   database.
-- **Prometheus** (`POLARIS_PROMETHEUS_PORT`) supports authentication mode
-  `NONE` only in this version — never expose it. PULL sources need to be
-  reachable from the `polaris` container on the internal Docker network, not
-  from the internet.
+- **PULL sources**: the stack ships no Prometheus of its own. Register sources
+  pointing at a Prometheus reachable from the `polaris` container over a
+  private network. Prometheus sources support authentication mode `NONE` only
+  in this version — do not expose such an instance to the internet just for
+  Polaris.
 - **API and control tower** (`POLARIS_HTTP_PORT`,
   `POLARIS_CONTROL_TOWER_PORT`) stay loopback-bound because the edge proxies
   to them over the internal network.

@@ -44,7 +44,6 @@ Only the *host* side changes; container ports and service-to-service addresses a
 | Variable | Default |
 | --- | --- |
 | `POLARIS_POSTGRES_PORT` | `5432` |
-| `POLARIS_PROMETHEUS_PORT` | `9090` |
 | `POLARIS_HTTP_PORT` | `8080` |
 | `POLARIS_CONTROL_TOWER_PORT` | `3000` |
 

@@ -8,7 +8,7 @@ description: "Run the Polaris stack locally with Docker Compose or bare Go."
 
 ## Prerequisites
 
-- Docker with Compose (Postgres 18.4, Prometheus, and the two Polaris images run in containers)
+- Docker with Compose (Postgres 18.4 and the two Polaris images run in containers)
 - A Google Cloud **OAuth 2.0 Web application** client (for OIDC authentication)
 - Node 24 and Go 1.26 only if you plan to develop outside Docker
 
@@ -47,18 +47,16 @@ docker compose up --build
 | API | http://localhost:8080/api/v1 |
 | Live OpenAPI contract | http://localhost:8080/openapi.yaml |
 | PostgreSQL | `localhost:5432` |
-| Development Prometheus | http://localhost:9090 |
 
-If a host port is already in use, override `POLARIS_CONTROL_TOWER_PORT`, `POLARIS_HTTP_PORT`,
-`POLARIS_POSTGRES_PORT`, or `POLARIS_PROMETHEUS_PORT` in `.env`. Container ports and
-service-to-service addresses stay unchanged.
+If a host port is already in use, override `POLARIS_CONTROL_TOWER_PORT`, `POLARIS_HTTP_PORT`, or
+`POLARIS_POSTGRES_PORT` in `.env`. Container ports and service-to-service addresses stay unchanged.
 
 Database migrations run automatically on boot and are safe to re-run.
 
 ## 3. Run the Go process outside Docker
 
 ```sh
-docker compose up -d postgres prometheus
+docker compose up -d postgres
 go run ./cmd/polaris
 ```
 
