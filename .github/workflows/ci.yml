@@ -395,8 +395,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/claudioed/polaris:latest
-            ghcr.io/claudioed/polaris:${{ env.SHORT_SHA }}
+            ghcr.io/${{ github.repository_owner }}/polaris:latest
+            ghcr.io/${{ github.repository_owner }}/polaris:${{ env.SHORT_SHA }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
       - name: Build and publish control tower
@@ -409,33 +409,33 @@ jobs:
           build-args: |
             VITE_GOOGLE_CLIENT_ID=${{ secrets.POLARIS_OIDC_CLIENT_ID }}
           tags: |
-            ghcr.io/claudioed/polaris-control-tower:latest
-            ghcr.io/claudioed/polaris-control-tower:${{ env.SHORT_SHA }}
+            ghcr.io/${{ github.repository_owner }}/polaris-control-tower:latest
+            ghcr.io/${{ github.repository_owner }}/polaris-control-tower:${{ env.SHORT_SHA }}
           cache-from: type=gha,scope=control-tower
           cache-to: type=gha,mode=max,scope=control-tower
       - uses: sigstore/cosign-installer@v3
       - name: Sign published images
         run: |
-          cosign sign --yes ghcr.io/claudioed/polaris@${{ steps.api.outputs.digest }}
-          cosign sign --yes ghcr.io/claudioed/polaris-control-tower@${{ steps.web.outputs.digest }}
+          cosign sign --yes ghcr.io/${{ github.repository_owner }}/polaris@${{ steps.api.outputs.digest }}
+          cosign sign --yes ghcr.io/${{ github.repository_owner }}/polaris-control-tower@${{ steps.web.outputs.digest }}
       - name: Generate API SBOM
         uses: anchore/sbom-action@v0
         with:
-          image: ghcr.io/claudioed/polaris@${{ steps.api.outputs.digest }}
+          image: ghcr.io/${{ github.repository_owner }}/polaris@${{ steps.api.outputs.digest }}
           format: spdx-json
           output-file: polaris-api.spdx.json
       - name: Generate control-tower SBOM
         uses: anchore/sbom-action@v0
         with:
-          image: ghcr.io/claudioed/polaris-control-tower@${{ steps.web.outputs.digest }}
+          image: ghcr.io/${{ github.repository_owner }}/polaris-control-tower@${{ steps.web.outputs.digest }}
           format: spdx-json
           output-file: polaris-control-tower.spdx.json
       - name: Attest SBOMs
         run: |
           cosign attest --yes --predicate polaris-api.spdx.json --type spdxjson \
-            ghcr.io/claudioed/polaris@${{ steps.api.outputs.digest }}
+            ghcr.io/${{ github.repository_owner }}/polaris@${{ steps.api.outputs.digest }}
           cosign attest --yes --predicate polaris-control-tower.spdx.json --type spdxjson \
-            ghcr.io/claudioed/polaris-control-tower@${{ steps.web.outputs.digest }}
+            ghcr.io/${{ github.repository_owner }}/polaris-control-tower@${{ steps.web.outputs.digest }}
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -482,11 +482,11 @@ jobs:
       - name: Add release tags to published images
         run: |
           docker buildx imagetools create \
-            -t ghcr.io/claudioed/polaris:${{ steps.version.outputs.version }} \
-            ghcr.io/claudioed/polaris:${{ env.SHORT_SHA }}
+            -t ghcr.io/${{ github.repository_owner }}/polaris:${{ steps.version.outputs.version }} \
+            ghcr.io/${{ github.repository_owner }}/polaris:${{ env.SHORT_SHA }}
           docker buildx imagetools create \
-            -t ghcr.io/claudioed/polaris-control-tower:${{ steps.version.outputs.version }} \
-            ghcr.io/claudioed/polaris-control-tower:${{ env.SHORT_SHA }}
+            -t ghcr.io/${{ github.repository_owner }}/polaris-control-tower:${{ steps.version.outputs.version }} \
+            ghcr.io/${{ github.repository_owner }}/polaris-control-tower:${{ env.SHORT_SHA }}
       - name: Create and push git tag
         run: |
           git config user.name "github-actions[bot]"
@@ -499,6 +499,6 @@ jobs:
           tag_name: ${{ steps.version.outputs.version }}
           generate_release_notes: true
           body: |
-            API: `ghcr.io/claudioed/polaris:${{ steps.version.outputs.version }}`
+            API: `ghcr.io/${{ github.repository_owner }}/polaris:${{ steps.version.outputs.version }}`
 
-            Control tower: `ghcr.io/claudioed/polaris-control-tower:${{ steps.version.outputs.version }}`
+            Control tower: `ghcr.io/${{ github.repository_owner }}/polaris-control-tower:${{ steps.version.outputs.version }}`
