@@ -15,6 +15,7 @@ const sidebars: SidebarsConfig = {
         "introduction/getting-started",
         "introduction/authentication",
         "introduction/configuration",
+        "introduction/deployment",
       ],
     },
     {

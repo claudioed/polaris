@@ -39,7 +39,7 @@ All configuration is environment-based. The canonical template is
 
 ## Docker Compose host ports
 
-Only the *host* side changes; container ports and service-to-service addresses are fixed.
+Only the *host* side changes; container ports and service-to-service addresses are fixed. Published ports bind to loopback only, so nothing is reachable beyond the host; expose a public domain through the [edge](#edge-caddy) instead.
 
 | Variable | Default |
 | --- | --- |
@@ -47,6 +47,16 @@ Only the *host* side changes; container ports and service-to-service addresses a
 | `POLARIS_PROMETHEUS_PORT` | `9090` |
 | `POLARIS_HTTP_PORT` | `8080` |
 | `POLARIS_CONTROL_TOWER_PORT` | `3000` |
+
+## Edge (Caddy)
+
+Only active with `docker compose --profile edge up`; see [Deployment](deployment) for the full domain setup.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `POLARIS_DOMAIN` | `polaris-harness.cloud` | Public domain Caddy serves with automatic TLS. DNS must point at the host. |
+| `POLARIS_EDGE_HTTP_PORT` | `80` | Host port for HTTP (ACME challenges, redirect to HTTPS). |
+| `POLARIS_EDGE_HTTPS_PORT` | `443` | Host port for HTTPS. |
 
 ## Control tower (build time)
 
