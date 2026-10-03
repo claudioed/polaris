@@ -49,7 +49,7 @@ export function SetupWorkspace({ catalog, onClose, onReady }: Props) {
       });
       await createFitnessTarget(squad.id, {
         name: targetName.trim(),
-        type: targetType,
+        kind: targetType,
         description: "Initial target created during control-tower setup",
       });
       return squad.id;

@@ -5,6 +5,7 @@ import {
   ApiError,
   activateFitnessFunction,
   createFitnessFunction,
+  createFitnessFunctionVersion,
   createFitnessTarget,
   createSquad,
   createTribe,
@@ -373,11 +374,58 @@ describe("endpoints", () => {
     const created = resourceRecord({ id: "target-new", kind: "fitness-target" });
     const captured = useCapture("*/api/v1/squads/:squadId/fitness-targets", created);
 
-    await createFitnessTarget("squad-1", { name: "Orders API", type: "SERVICE" });
+    await createFitnessTarget("squad-1", { name: "Orders API", kind: "SERVICE" });
 
     const request = captured.only();
     expect(request.method).toBe("POST");
     expect(request.path).toBe("/api/v1/squads/squad-1/fitness-targets");
-    expect(request.body).toEqual({ name: "Orders API", type: "SERVICE" });
+    expect(request.body).toEqual({ name: "Orders API", kind: "SERVICE" });
+  });
+
+  it("follows pagination cursors until a page has no next cursor", async () => {
+    const first = resourceRecord({ id: "target-1" });
+    const second = resourceRecord({ id: "target-2" });
+    const queries: string[] = [];
+    server.use(
+      http.get("*/api/v1/squads/:squadId/fitness-targets", ({ request }) => {
+        const url = new URL(request.url);
+        queries.push(url.search);
+        if (url.searchParams.get("cursor") === null) {
+          return HttpResponse.json(page([first], "cursor-1"));
+        }
+        return HttpResponse.json(page([second]));
+      }),
+    );
+
+    const result = await getSquadTargets("squad-1");
+
+    expect(result.items).toEqual([first, second]);
+    expect(queries).toEqual(["?limit=200", "?limit=200&cursor=cursor-1"]);
+  });
+
+  it("rejects collections that never stop paginating", async () => {
+    server.use(
+      http.get("*/api/v1/squads/:squadId/fitness-targets", () =>
+        HttpResponse.json(page([resourceRecord()], "loop-forever")),
+      ),
+    );
+
+    await expect(getSquadTargets("squad-1")).rejects.toThrow(
+      "exceeded 100 pages",
+    );
+  });
+
+  it("creates versions guarded by If-Match revisions", async () => {
+    const definition = pullDefinition();
+    const versioned = fitnessFunction({ id: "fn-1", revision: 3, activeVersion: 2 });
+    const captured = useCapture("*/api/v1/fitness-functions/:id/versions", versioned);
+
+    await expect(createFitnessFunctionVersion("fn-1", 3, definition)).resolves.toEqual(versioned);
+
+    const request = captured.only();
+    expect(request.method).toBe("POST");
+    expect(request.path).toBe("/api/v1/fitness-functions/fn-1/versions");
+    expect(request.headers.get("If-Match")).toBe('"3"');
+    expect(request.body).toEqual(definition);
   });
 });

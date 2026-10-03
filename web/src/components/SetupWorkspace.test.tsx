@@ -150,7 +150,7 @@ describe("SetupWorkspace", () => {
         path: "/api/v1/squads/squad-created/fitness-targets",
         body: {
           name: "Orders API",
-          type: "APPLICATION",
+          kind: "APPLICATION",
           description: "Initial target created during control-tower setup",
         },
       },
