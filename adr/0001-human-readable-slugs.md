@@ -1,6 +1,7 @@
 # ADR 0001: Human-readable slugs for Tribe, Squad, and Fitness Function
 
-Status: Accepted (contract delivered; storage/logic implementation pending — see Implementation plan)
+Status: Accepted; implemented (contract, storage, and lookup logic all delivered — see
+Amendment below for a correction made during implementation)
 Date: 2026-10-03
 
 ## Context
@@ -33,15 +34,11 @@ Add an optional, human-readable `slug` to **Tribe**, **Squad**, and **FitnessFun
    understandable" — extends to the new field: slug does not become a second identity to
    reconcile.
 
-2. **Uniqueness is scoped to where collisions actually happen, not global:**
-   - `Tribe.slug` — unique across all tribes (there are few; global scope is fine).
-   - `Squad.slug` — unique within its tribe (`UNIQUE (tribe_id, slug)`), mirroring the
-     existing `UNIQUE (tribe_id, name)` constraint. Two tribes will each want a squad called
-     `checkout` or `platform`; forcing global uniqueness would just push every squad into
-     ugly disambiguated slugs.
-   - `FitnessFunction.slug` — unique within its owning squad (`UNIQUE (squad_id, slug)`),
-     mirroring `UNIQUE (squad_id, name)`. Every squad will want a `code-quality` and a
-     `security` fitness function; that's the exact case that motivated this ADR.
+2. **Uniqueness is global for all three kinds** (corrected during implementation — see
+   Amendment; originally specced as scoped per-parent):
+   - `Tribe.slug` — unique across all tribes.
+   - `Squad.slug` — unique across all squads.
+   - `FitnessFunction.slug` — unique across all fitness functions.
 
 3. **Auto-generate from `name`, allow explicit override, validate like a DNS label.**
    Default is a kebab-case derivation of `name` (lowercase, strip diacritics/punctuation,
@@ -97,10 +94,18 @@ Add an optional, human-readable `slug` to **Tribe**, **Squad**, and **FitnessFun
   every existing and future client (including `polaris-mcp` and `polaris-measurements-action`)
   would need to know to call the alternate route; a lenient parameter benefits the primary
   use case — CI configs and LLM tool calls typing a slug directly — with zero client changes.
-- **Global uniqueness for all three kinds.** Rejected per point 2: `code-quality`/`security`-
-  style fitness-function slugs and generic squad names will recur constantly across tribes
-  and squads; global uniqueness would force ugly disambiguation on exactly the names people
-  most want to reuse.
+- **Scoped (per-parent) uniqueness instead of global.** This was the original decision (see
+  Amendment) and was reversed during implementation: every lenient lookup (`GET
+  /tribes/{tribeId}`, `GET /squads/{squadId}`, `GET /fitness-functions/{fitnessFunctionId}`,
+  and the same path parameters reused by child-creation/listing endpoints like `POST
+  /squads/{squadId}/fitness-functions`) is a flat route with no parent segment, so a
+  parent-scoped slug cannot be resolved from the URL alone — the server would need the
+  parent's id *before* it could even look up the child, which defeats the purpose. Global
+  uniqueness is the only scope that works with flat routes; the "ugly disambiguation" cost is
+  real but smaller than it first appears, since `code-quality`/`security`-style names are
+  exactly the ones worth keeping distinguishable across squads anyway (`checkout-code-quality`
+  vs. `platform-code-quality` reads fine, and the auto-derivation still saves the common case
+  of one tribe/squad per name).
 - **Slug as the primary key / replacing `id`.** Rejected: contradicts the project's own
   stated identity-stability principle and makes every rename a cascading-FK migration
   instead of a single bounded, auditable operation.
@@ -126,7 +131,7 @@ Costs / risks:
 
 ## Implementation plan
 
-Delivered in this change (contract-first):
+Delivered in PR #11 (contract-first):
 - `api/openapi.yaml`: `Slug` schema; `slug` field on `Tribe`, `Squad`, `FitnessFunction`;
   optional `slug` on `CreateTribeRequest`, `CreateSquadRequest`, and the new
   `CreateFitnessFunctionRequest`; `TribeId`/`SquadId`/`FitnessFunctionId` path parameters
@@ -134,16 +139,58 @@ Delivered in this change (contract-first):
 - `gen/api/server.gen.go` regenerated from the above (`make generate`); `go build ./...`
   and `go test ./internal/...` verified green with the new, as-yet-unused generated fields.
 
-Pending as a follow-up change (storage/logic):
-- `migrations/00002_add_slugs.sql`: `slug text` column on `tribes`, `squads`,
-  `fitness_functions`; `UNIQUE (slug)` on `tribes`; `UNIQUE (tribe_id, slug)` on `squads`;
-  `UNIQUE (squad_id, slug)` on `fitness_functions`.
-- A new `internal/domain/slug` package: `Generate(name string) string` (kebab-case
-  derivation) and `Validate(s string) error` (format/length), unit-tested in isolation.
-- `internal/adapters/postgres/store.go`: generate-or-validate slug on `CreateRecord` for
-  `tribe`/`squad` and on `CreateFitnessFunction`; a lenient lookup (`GetRecord`,
-  `GetFitnessFunction`) that tries a UUID parse first and falls back to a scoped slug lookup.
-- `internal/adapters/httpapi`: route the widened path parameters through the lenient lookup;
-  map the new unique-violation to the existing `409 RESOURCE_CONFLICT` problem response.
-- `docs-site`: mention slugs in `domain/aggregates` and the relevant `modules/*` pages;
-  regenerate the REST API reference pages from the updated spec.
+Delivered in this follow-up change (storage and lookup logic):
+- `internal/domain/slug`: `Generate`, `Validate`, `Resolve` (derive-or-validate), unit-tested
+  in isolation (100% coverage).
+- `migrations/00002_add_slugs.sql`: `slug text NOT NULL` column on `tribes`, `squads`,
+  `fitness_functions`, each with a format `CHECK` and a **global** `UNIQUE` constraint (see
+  Amendment for why global, not per-parent); backfills existing rows by deriving from `name`
+  with a numeric-suffix dedup.
+- `internal/application/service.go`: `CreateRecord` resolves slug (explicit-or-derived) for
+  `tribe`/`squad`; `CreateFitnessFunction` takes an explicit-slug parameter and resolves it
+  after `fitness.New` succeeds (so a bad name still fails with the clearer definition-invalid
+  error, not a confusing slug error); a new `resolveParentID`/`parentKindOf` mechanism resolves
+  every sluggable parent path parameter (tribeId, squadId, fitnessFunctionId) to its real id
+  before it reaches any SQL filter or foreign key, covering not just the resource's own GET but
+  every child-creation/listing endpoint scoped by it.
+- `internal/adapters/postgres/store.go`: `CreateRecord` (tribe/squad) and
+  `CreateFitnessFunction` persist the resolved slug (with a defensive `slug.Generate` fallback
+  for direct/test callers that bypass `Service`); `GetRecord` and `GetFitnessFunction` resolve
+  `WHERE id::text = $1 OR slug = $1`, returning the real id either way.
+- `internal/adapters/httpapi/handler.go`: `createTribe`/`createSquad`/`createFitnessFunction`
+  accept an optional `slug` body field; no other handler changes were needed because lenient
+  lookup lives entirely behind the existing `GetRecord`/`GetFitnessFunction` calls already used
+  by every relevant handler.
+- Tests: unit coverage for `slug` package and the new resolution/derivation paths in
+  `internal/application`; two new Postgres integration test functions
+  (`TestRecordSlugDerivationAndLookup`, `TestFitnessFunctionSlugDerivationAndLookup`) covering
+  auto-derivation, explicit slugs, global-conflict rejection, and id-or-slug lookup against a
+  real database. `make coverage` = 92.6% (gate 90%); `make test`, `make integration` green.
+
+Not done (explicitly out of scope for this change):
+- `docs-site` updates (mention slugs in `domain/aggregates`/`modules/*`, regenerate the REST
+  API reference pages) — tracked separately, not required for the API/storage to work.
+- No automatic suffix-retry when an *auto-derived* slug collides (e.g. two fitness functions
+  both named "Code Quality" in different squads, which the old per-squad scope would never have
+  collided on but global scope now can): it surfaces as the same `409` a duplicate `name` would,
+  and the caller supplies an explicit `slug` to resolve it. A retry-with-suffix loop was
+  considered and rejected as unnecessary complexity for a rare case with a simple workaround.
+
+## Amendment (2026-10-03, during implementation)
+
+While implementing the storage/logic half of this ADR, point 2's original per-parent scoping
+(`Squad.slug` unique within its tribe, `FitnessFunction.slug` unique within its squad) turned
+out to be incompatible with point 7's lenient-lookup design: `GET /squads/{squadId}` and `GET
+/fitness-functions/{fitnessFunctionId}` are flat routes with no parent segment in the URL. A
+per-tribe-scoped squad slug can only be resolved if the tribe is already known, which the
+lenient `{squadId}` parameter alone never provides — the two decisions in the same ADR
+contradicted each other, and this was only discovered once lookup queries were written out.
+
+**Resolution: uniqueness is global for all three kinds**, documented in the revised point 2
+and the revised Alternatives entry above. The practical cost is that two squads in different
+tribes can no longer both be named (and slugged) exactly `checkout`; this is judged acceptable
+since the primary motivating use case (CI manifests, `polaris-mcp` tool calls) already wants a
+distinguishable slug like `commerce-checkout` vs. `logistics-checkout` for clarity anyway, and
+the auto-derivation default still works unmodified for the common case of non-colliding names.
+
+No other part of the original decision changed.

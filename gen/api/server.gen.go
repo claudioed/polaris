@@ -8723,6 +8723,22 @@ func (response CreateTribe409ApplicationProblemPlusJSONResponse) VisitCreateTrib
 	return err
 }
 
+type CreateTribe422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableEntityApplicationProblemPlusJSONResponse
+}
+
+func (response CreateTribe422ApplicationProblemPlusJSONResponse) VisitCreateTribeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetTribeRequestObject struct {
 	TribeId TribeId `json:"tribeId"`
 }
@@ -9084,6 +9100,22 @@ func (response CreateSquad409ApplicationProblemPlusJSONResponse) VisitCreateSqua
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSquad422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableEntityApplicationProblemPlusJSONResponse
+}
+
+func (response CreateSquad422ApplicationProblemPlusJSONResponse) VisitCreateSquadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
 	_, err := buf.WriteTo(w)
 	return err
 }

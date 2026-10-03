@@ -198,6 +198,7 @@ func (h *Handler) eventRoutes(r chi.Router) {
 func (h *Handler) createTribe(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name        string  `json:"name"`
+		Slug        *string `json:"slug"`
 		Description *string `json:"description"`
 	}
 	if !decode(w, r, &body) {
@@ -212,6 +213,7 @@ func (h *Handler) createTribe(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) createSquad(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name    string  `json:"name"`
+		Slug    *string `json:"slug"`
 		Mission *string `json:"mission"`
 	}
 	if !decode(w, r, &body) {
@@ -460,11 +462,18 @@ func (h *Handler) transition(kind, idParam, status string) http.HandlerFunc {
 }
 
 func (h *Handler) createFitnessFunction(w http.ResponseWriter, r *http.Request) {
-	var definition fitness.Definition
-	if !decode(w, r, &definition) {
+	var body struct {
+		fitness.Definition
+		Slug *string `json:"slug"`
+	}
+	if !decode(w, r, &body) {
 		return
 	}
-	fn, err := h.service.CreateFitnessFunction(r.Context(), chi.URLParam(r, "squadId"), definition)
+	slug := ""
+	if body.Slug != nil {
+		slug = *body.Slug
+	}
+	fn, err := h.service.CreateFitnessFunction(r.Context(), chi.URLParam(r, "squadId"), body.Definition, slug)
 	if err != nil {
 		h.problem(w, r, err)
 		return

@@ -254,6 +254,7 @@ paths:
               schema: { $ref: "#/components/schemas/Tribe" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
   /tribes/{tribeId}:
     get:
       operationId: getTribe
@@ -331,6 +332,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
   /squads/{squadId}:
     get:
       operationId: getSquad
