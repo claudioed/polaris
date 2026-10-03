@@ -6,6 +6,7 @@ bin/
 /polaris
 web/node_modules/
 web/dist/
+web/coverage/
 web/*.tsbuildinfo
 docs-site/node_modules/
 docs-site/build/

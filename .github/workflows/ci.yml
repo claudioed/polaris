@@ -91,10 +91,10 @@ jobs:
       - name: Install dependencies
         working-directory: web
         run: npm ci
-      - name: Test and lint
+      - name: Test, coverage gate, and lint
         working-directory: web
         run: |
-          npm run test
+          npm run test:coverage
           npm run lint
       - name: Type-check and build
         working-directory: web

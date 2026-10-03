@@ -413,10 +413,10 @@ export function CreateFitnessFunction({
                   <p>Choose whether Polaris receives pipeline data or collects it from a source.</p>
                 </div>
                 <div className="segmented">
-                  <button type="button" className={acquisitionMode === "PULL" ? "active" : ""} onClick={() => setValue("acquisitionMode", "PULL")}>
+                  <button type="button" className={acquisitionMode === "PULL" ? "active" : ""} onClick={() => setValue("acquisitionMode", "PULL", { shouldDirty: true })}>
                     Pull from source
                   </button>
-                  <button type="button" className={acquisitionMode === "PUSH" ? "active" : ""} onClick={() => setValue("acquisitionMode", "PUSH")}>
+                  <button type="button" className={acquisitionMode === "PUSH" ? "active" : ""} onClick={() => setValue("acquisitionMode", "PUSH", { shouldDirty: true })}>
                     Receive from pipeline
                   </button>
                 </div>
