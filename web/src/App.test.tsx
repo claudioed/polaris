@@ -337,7 +337,6 @@ describe("Polaris control tower", () => {
     await screen.findByText("Checkout availability");
 
     expect(screen.getByRole("button", { name: /Evaluations/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Templates/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Waivers/ })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: /Fitness targets/ }));
@@ -349,6 +348,10 @@ describe("Polaris control tower", () => {
 
     await user.click(screen.getByRole("button", { name: /^Producers/ }));
     expect(await screen.findByRole("heading", { name: "Measurement producers" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^Templates/ }));
+    expect(await screen.findByRole("heading", { name: "Fitness function templates" })).toBeInTheDocument();
+    expect(screen.getByText("Templates", { selector: "strong" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /^Settings/ }));
     expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();

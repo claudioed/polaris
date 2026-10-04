@@ -37,11 +37,12 @@ import { SetupWorkspace } from "./components/SetupWorkspace";
 import { SignIn } from "./components/SignIn";
 import { SourcesWorkspace } from "./components/SourcesWorkspace";
 import { TargetsWorkspace } from "./components/TargetsWorkspace";
+import { TemplatesWorkspace } from "./components/TemplatesWorkspace";
 import type { AcquisitionMode, Catalog, Enforcement, FitnessFunction, Lifecycle } from "./types";
 import { activeDefinition, initials, matchesQuery, relativeTime } from "./utils";
 
 type FilterValue<T extends string> = T | "ALL";
-type WorkspaceView = "functions" | "targets" | "sources" | "producers" | "insights" | "settings";
+type WorkspaceView = "functions" | "targets" | "sources" | "producers" | "insights" | "templates" | "settings";
 
 const breadcrumbs: Record<WorkspaceView, string> = {
   functions: "Fitness functions",
@@ -49,6 +50,7 @@ const breadcrumbs: Record<WorkspaceView, string> = {
   sources: "Measurement sources",
   producers: "Measurement producers",
   insights: "Insights",
+  templates: "Templates",
   settings: "Settings",
 };
 
@@ -141,7 +143,7 @@ export function App() {
           <button className={clsx(view === "producers" && "active")} onClick={() => setView("producers")}><Network size={18} /><span>Producers</span></button>
           <p>Governance</p>
           <button className={clsx(view === "insights" && "active")} onClick={() => setView("insights")}><Gauge size={18} /><span>Insights</span></button>
-          <button disabled title="Template workspace is planned"><Blocks size={18} /><span>Templates</span><em>Soon</em></button>
+          <button className={clsx(view === "templates" && "active")} onClick={() => setView("templates")}><Blocks size={18} /><span>Templates</span></button>
           <button disabled title="Waiver workspace is planned"><ShieldCheck size={18} /><span>Waivers</span><em>Soon</em></button>
         </nav>
         <div className="sidebar-footer">
@@ -276,6 +278,7 @@ export function App() {
         {view === "sources" && catalog && <SourcesWorkspace catalog={catalog} />}
         {view === "producers" && catalog && <ProducersWorkspace catalog={catalog} />}
         {view === "insights" && catalog && <OverviewWorkspace catalog={catalog} />}
+        {view === "templates" && catalog && <TemplatesWorkspace catalog={catalog} />}
         {view === "settings" && catalog && (
           <SettingsWorkspace catalog={catalog} onCreated={() => void catalogQuery.refetch()} />
         )}
