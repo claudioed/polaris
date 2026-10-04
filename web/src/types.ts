@@ -105,3 +105,113 @@ export interface Problem {
   code?: string;
   status?: number;
 }
+
+export type TargetLifecycle = "ACTIVE" | "DEPRECATED" | "RETIRED";
+
+export type EvaluationRequestStatus = "PENDING" | "CANCELLED";
+
+export interface EvaluationRequest extends ResourceRecord {
+  kind: "evaluation-request";
+  status: EvaluationRequestStatus;
+}
+
+export type WaiverStatus = "PROPOSED" | "APPROVED" | "REJECTED" | "REVOKED";
+export type WaiverTransition = "approvals" | "rejections" | "revocations";
+
+export interface WaiverData {
+  reason: string;
+  criterionKeys?: string[];
+  risk?: string;
+  compensatingAction?: string;
+  startsAt?: string;
+  expiresAt?: string;
+  [key: string]: unknown;
+}
+
+export interface Waiver extends ResourceRecord {
+  kind: "waiver";
+  status: WaiverStatus;
+  data: WaiverData;
+}
+
+export type CollectionAttemptStatus = "SUCCEEDED" | "FAILED";
+
+export interface Measurement {
+  criterionKey: string;
+  value: number;
+  unit: string;
+}
+
+export interface CollectionAttemptData {
+  sourceId?: string;
+  measurements?: Measurement[];
+  evidence?: Record<string, unknown>[];
+  [key: string]: unknown;
+}
+
+export interface CollectionAttempt extends ResourceRecord {
+  kind: "collection-attempt";
+  status: CollectionAttemptStatus;
+  data: CollectionAttemptData;
+}
+
+export interface FitnessFunctionTemplateData {
+  name: string;
+  description?: string;
+  definition?: FitnessDefinition;
+  [key: string]: unknown;
+}
+
+export interface FitnessFunctionTemplate extends ResourceRecord {
+  kind: "fitness-function-template";
+  status: "ACTIVE";
+  data: FitnessFunctionTemplateData;
+}
+
+export interface TemplateAdoptionData {
+  squadId: string;
+  targetIds?: string[];
+  reason?: string;
+  [key: string]: unknown;
+}
+
+export interface TemplateAdoption extends ResourceRecord {
+  kind: "template-adoption";
+  status: "ACTIVE";
+  data: TemplateAdoptionData;
+}
+
+export type EvaluationOutcome = "PASS" | "WARN" | "FAIL" | "ERROR" | "NOT_APPLICABLE";
+export type EvaluationDisposition = "ACCEPTED" | "ATTENTION_REQUIRED" | "BLOCKED" | "WAIVED";
+
+export interface CriterionResult {
+  criterionKey: string;
+  value?: number;
+  unit?: string;
+  outcome: "PASS" | "WARN" | "FAIL";
+}
+
+export interface Evaluation {
+  evaluationId: string;
+  fitnessFunctionId: string;
+  fitnessFunctionVersion: number;
+  acquisitionMode: AcquisitionMode;
+  originId: string;
+  outcome: EvaluationOutcome;
+  disposition: EvaluationDisposition;
+  observedAt: string;
+  validUntil: string;
+  criterionResults: CriterionResult[];
+  data: Record<string, unknown>;
+}
+
+export interface SubmittedEvaluation extends Evaluation {
+  replayed: boolean;
+}
+
+export interface FitnessOverview {
+  scope: "squad" | "tribe";
+  scopeId: string;
+  generatedAt: string;
+  status: "AVAILABLE";
+}

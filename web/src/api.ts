@@ -1,12 +1,21 @@
 import { currentToken, signOut } from "./auth";
 import type {
   Catalog,
+  CollectionAttempt,
+  Evaluation,
+  EvaluationRequest,
   FitnessDefinition,
   FitnessFunction,
+  FitnessFunctionTemplate,
+  FitnessOverview,
   Page,
   Problem,
   ResourceRecord,
   Squad,
+  TemplateAdoption,
+  WaiverTransition,
+  Waiver,
+  WaiverData,
 } from "./types";
 
 const API_BASE: string = import.meta.env.VITE_API_BASE || "/api/v1";
@@ -208,4 +217,139 @@ export function createMeasurementProducer(
     method: "POST",
     body: JSON.stringify(data),
   });
+}
+
+// --- Fitness targets: lifecycle + history -----------------------------------
+
+export function transitionFitnessTarget(
+  targetId: string,
+  status: "ACTIVE" | "DEPRECATED" | "RETIRED",
+  reason?: string,
+): Promise<ResourceRecord> {
+  return request(`/fitness-targets/${encodeURIComponent(targetId)}/lifecycle-transitions`, {
+    method: "POST",
+    body: JSON.stringify({ status, ...(reason ? { reason } : {}) }),
+  });
+}
+
+export async function getFitnessTargetHistory(targetId: string): Promise<ResourceRecord[]> {
+  return listAll(`/fitness-targets/${encodeURIComponent(targetId)}/fitness-history`);
+}
+
+// --- Evaluations + evaluation requests ---------------------------------------
+
+export async function listEvaluations(fitnessFunctionId: string): Promise<Evaluation[]> {
+  return listAll(`/fitness-functions/${encodeURIComponent(fitnessFunctionId)}/evaluations`);
+}
+
+export function getEvaluation(evaluationId: string): Promise<Evaluation> {
+  return request(`/evaluations/${encodeURIComponent(evaluationId)}`);
+}
+
+export function createEvaluationRequest(fitnessFunctionId: string): Promise<EvaluationRequest> {
+  return request(
+    `/fitness-functions/${encodeURIComponent(fitnessFunctionId)}/evaluation-requests`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+export function getEvaluationRequest(requestId: string): Promise<EvaluationRequest> {
+  return request(`/evaluation-requests/${encodeURIComponent(requestId)}`);
+}
+
+export function cancelEvaluationRequest(requestId: string): Promise<EvaluationRequest> {
+  return request(`/evaluation-requests/${encodeURIComponent(requestId)}/cancellations`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+// --- Collection attempts (pull acquisition) ----------------------------------
+
+export async function listCollectionAttempts(
+  fitnessFunctionId: string,
+): Promise<CollectionAttempt[]> {
+  return listAll(
+    `/fitness-functions/${encodeURIComponent(fitnessFunctionId)}/collection-attempts`,
+  );
+}
+
+export function getCollectionAttempt(attemptId: string): Promise<CollectionAttempt> {
+  return request(`/collection-attempts/${encodeURIComponent(attemptId)}`);
+}
+
+/** Triggers an on-demand pull collection now; returns the newly recorded evaluation. */
+export function collectNow(fitnessFunctionId: string): Promise<Evaluation> {
+  return request(
+    `/fitness-functions/${encodeURIComponent(fitnessFunctionId)}/collection-attempts`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+export function retryCollectionAttempt(attemptId: string): Promise<Evaluation> {
+  return request(`/collection-attempts/${encodeURIComponent(attemptId)}/retries`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+// --- Waivers -------------------------------------------------------------------
+
+export function createWaiver(
+  fitnessFunctionId: string,
+  data: WaiverData,
+): Promise<Waiver> {
+  return request(`/fitness-functions/${encodeURIComponent(fitnessFunctionId)}/waivers`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function transitionWaiver(
+  waiverId: string,
+  transition: WaiverTransition,
+  reason?: string,
+): Promise<Waiver> {
+  return request(
+    `/waivers/${encodeURIComponent(waiverId)}/${encodeURIComponent(transition)}`,
+    { method: "POST", body: JSON.stringify(reason ? { reason } : {}) },
+  );
+}
+
+// --- Fitness function templates --------------------------------------------
+
+export async function listFitnessFunctionTemplates(
+  tribeId: string,
+): Promise<FitnessFunctionTemplate[]> {
+  return listAll(`/tribes/${encodeURIComponent(tribeId)}/fitness-function-templates`);
+}
+
+export function createFitnessFunctionTemplate(
+  tribeId: string,
+  data: { name: string; description?: string; definition?: FitnessDefinition },
+): Promise<FitnessFunctionTemplate> {
+  return request(`/tribes/${encodeURIComponent(tribeId)}/fitness-function-templates`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function adoptFitnessFunctionTemplate(
+  templateId: string,
+  data: { squadId: string; targetIds?: string[]; reason?: string },
+): Promise<TemplateAdoption> {
+  return request(`/fitness-function-templates/${encodeURIComponent(templateId)}/adoptions`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+// --- Insights (overview) ----------------------------------------------------
+
+export function getSquadFitnessOverview(squadId: string): Promise<FitnessOverview> {
+  return request(`/squads/${encodeURIComponent(squadId)}/fitness-overview`);
+}
+
+export function getTribeFitnessOverview(tribeId: string): Promise<FitnessOverview> {
+  return request(`/tribes/${encodeURIComponent(tribeId)}/fitness-overview`);
 }
