@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { http, HttpResponse } from "msw";
@@ -164,5 +164,136 @@ describe("TargetsWorkspace", () => {
     await userEvent.setup().selectOptions(screen.getByLabelText("Squad"), "squad-2");
 
     expect(await screen.findByText("Platform target")).toBeInTheDocument();
+  });
+
+  it("views a target's fitness history", async () => {
+    server.use(
+      http.get("*/api/v1/squads/:squadId/fitness-targets", () =>
+        HttpResponse.json(page([resourceRecord({ id: "target-1", kind: "fitness-target", data: { name: "Checkout API" } })])),
+      ),
+      http.get("*/api/v1/fitness-targets/:targetId/fitness-history", () =>
+        HttpResponse.json(page([resourceRecord({ id: "history-1", kind: "fitness-history", status: "ACTIVE" })])),
+      ),
+    );
+    renderWorkspace();
+    const user = userEvent.setup();
+
+    await screen.findByText("Checkout API");
+    await user.click(screen.getByRole("button", { name: /History/ }));
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(within(screen.getByRole("dialog")).getByText("ACTIVE")).toBeInTheDocument();
+  });
+
+  it("shows an empty state and an error state for fitness history", async () => {
+    server.use(
+      http.get("*/api/v1/squads/:squadId/fitness-targets", () =>
+        HttpResponse.json(page([resourceRecord({ id: "target-1", kind: "fitness-target", data: { name: "Checkout API" } })])),
+      ),
+      http.get("*/api/v1/fitness-targets/:targetId/fitness-history", () =>
+        HttpResponse.json(page([])),
+      ),
+    );
+    renderWorkspace();
+    const user = userEvent.setup();
+
+    await screen.findByText("Checkout API");
+    await user.click(screen.getByRole("button", { name: /History/ }));
+    expect(await screen.findByText("No fitness history recorded for this target yet.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    server.use(
+      http.get("*/api/v1/fitness-targets/:targetId/fitness-history", () =>
+        HttpResponse.json({ title: "boom" }, { status: 500 }),
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: /History/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("boom");
+  });
+
+  it("transitions a target's lifecycle with a reason", async () => {
+    let status: "ACTIVE" | "DEPRECATED" = "ACTIVE";
+    server.use(
+      http.get("*/api/v1/squads/:squadId/fitness-targets", () =>
+        HttpResponse.json(page([resourceRecord({ id: "target-1", kind: "fitness-target", status, data: { name: "Checkout API" } })])),
+      ),
+      http.post("*/api/v1/fitness-targets/:targetId/lifecycle-transitions", () => {
+        status = "DEPRECATED";
+        return HttpResponse.json(resourceRecord({ id: "target-1", kind: "fitness-target", status, data: { name: "Checkout API" } }), { status: 201 });
+      }),
+    );
+    renderWorkspace();
+    const user = userEvent.setup();
+
+    await screen.findByText("Checkout API");
+    await user.click(screen.getByRole("button", { name: "Transition" }));
+    const dialog = screen.getByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText("New lifecycle"), "DEPRECATED");
+    await user.type(within(dialog).getByLabelText("Reason"), "Replacement available");
+    await user.click(within(dialog).getByRole("button", { name: "Apply transition" }));
+
+    expect(await screen.findByText("DEPRECATED")).toBeInTheDocument();
+  });
+
+  it("surfaces an error when a transition fails and hides the action once retired", async () => {
+    server.use(
+      http.get("*/api/v1/squads/:squadId/fitness-targets", () =>
+        HttpResponse.json(page([resourceRecord({ id: "target-1", kind: "fitness-target", status: "RETIRED", data: { name: "Legacy API" } })])),
+      ),
+    );
+    renderWorkspace();
+
+    await screen.findByText("Legacy API");
+    expect(screen.queryByRole("button", { name: "Transition" })).not.toBeInTheDocument();
+  });
+
+  it("surfaces an error from a failed transition", async () => {
+    server.use(
+      http.get("*/api/v1/squads/:squadId/fitness-targets", () =>
+        HttpResponse.json(page([resourceRecord({ id: "target-1", kind: "fitness-target", status: "ACTIVE", data: { name: "Checkout API" } })])),
+      ),
+      http.post("*/api/v1/fitness-targets/:targetId/lifecycle-transitions", () =>
+        HttpResponse.json({ title: "Conflict" }, { status: 409 }),
+      ),
+    );
+    renderWorkspace();
+    const user = userEvent.setup();
+
+    await screen.findByText("Checkout API");
+    await user.click(screen.getByRole("button", { name: "Transition" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Apply transition" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Conflict");
+  });
+
+  it("falls back to a generic dialog title when the target has no name", async () => {
+    server.use(
+      http.get("*/api/v1/squads/:squadId/fitness-targets", () =>
+        HttpResponse.json(page([resourceRecord({ id: "target-1", kind: "fitness-target", status: "ACTIVE", data: {} })])),
+      ),
+      http.get("*/api/v1/fitness-targets/:targetId/fitness-history", () => HttpResponse.json(page([]))),
+    );
+    renderWorkspace();
+    const user = userEvent.setup();
+
+    await screen.findByText("Unnamed target");
+    await user.click(screen.getByRole("button", { name: /History/ }));
+    expect(within(screen.getByRole("dialog")).getByRole("heading", { name: "Target" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+
+    await user.click(screen.getByRole("button", { name: "Transition" }));
+    expect(within(screen.getByRole("dialog")).getByRole("heading", { name: "Target" })).toBeInTheDocument();
+  });
+
+  it("shows an unnamed squad placeholder in the squad picker", async () => {
+    const unnamed = squadFixture({ id: "squad-2", data: {} });
+    server.use(
+      http.get("*/api/v1/squads/:squadId/fitness-targets", () => HttpResponse.json(page([]))),
+    );
+    renderWorkspace({ squads: [squadFixture(), unnamed] });
+
+    await screen.findByText("No fitness targets yet");
+    expect(screen.getByRole("option", { name: /Unnamed squad/ })).toBeInTheDocument();
   });
 });

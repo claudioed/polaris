@@ -1,7 +1,13 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Check, CircleAlert, DatabaseZap, LoaderCircle, Plug, X } from "lucide-react";
-import { checkSourceConnection, createMeasurementSource, getSquadSources } from "../api";
+import { Check, CircleAlert, DatabaseZap, LoaderCircle, Plug, Power, X } from "lucide-react";
+import {
+  activateMeasurementSource,
+  checkSourceConnection,
+  createMeasurementSource,
+  getSquadSources,
+  retireMeasurementSource,
+} from "../api";
 import type { Catalog, ResourceRecord } from "../types";
 import { ResourceWorkspace } from "./ResourceWorkspace";
 
@@ -20,7 +26,7 @@ export function SourcesWorkspace({ catalog }: Props) {
       emptyTitle="No measurement sources yet"
       emptyBody="Register a Prometheus connection so pull-mode fitness functions can query it."
       createLabel="New source"
-      gridTemplate="minmax(200px, 2fr) 110px minmax(180px, 2fr) 110px 120px"
+      gridTemplate="minmax(190px, 2fr) 100px minmax(160px, 2fr) 100px 120px 110px"
       fetcher={getSquadSources}
       columns={[
         { header: "Source", render: (item) => <SourceCell item={item} /> },
@@ -35,6 +41,7 @@ export function SourcesWorkspace({ catalog }: Props) {
           ),
         },
         { header: "", render: (item) => <ConnectionCheckAction source={item} /> },
+        { header: "", render: (item, refetch) => <SourceLifecycleAction source={item} onChanged={refetch} /> },
       ]}
       renderCreateDialog={(squadId, handlers) => (
         <CreateSourceDialog squadId={squadId} {...handlers} />
@@ -74,6 +81,42 @@ function ConnectionCheckAction({ source }: { source: ResourceRecord }) {
       {mutation.isPending ? <LoaderCircle size={14} className="spin" /> : <Plug size={14} />}
       Test connection
     </button>
+  );
+}
+
+function SourceLifecycleAction({ source, onChanged }: { source: ResourceRecord; onChanged: () => void }) {
+  const [error, setError] = useState("");
+
+  const activate = useMutation({
+    mutationFn: () => activateMeasurementSource(source.id),
+    onSuccess: onChanged,
+    onError: (failure) => setError(failure.message),
+  });
+  const retire = useMutation({
+    mutationFn: () => retireMeasurementSource(source.id),
+    onSuccess: onChanged,
+    onError: (failure) => setError(failure.message),
+  });
+
+  if (source.status === "RETIRED") return null;
+
+  const mutation = source.status === "DRAFT" ? activate : retire;
+  const label = source.status === "DRAFT" ? "Activate" : "Retire";
+
+  return (
+    <span className="row-actions">
+      <button
+        className="button ghost small row-action"
+        onClick={() => mutation.mutate()}
+        disabled={mutation.isPending}
+        type="button"
+        title={error || undefined}
+      >
+        {mutation.isPending ? <LoaderCircle size={14} className="spin" /> : <Power size={14} />}
+        {label}
+      </button>
+      {error && <small className="field-error">{error}</small>}
+    </span>
   );
 }
 

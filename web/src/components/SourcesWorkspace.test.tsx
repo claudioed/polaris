@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { http, HttpResponse } from "msw";
@@ -176,5 +176,70 @@ describe("SourcesWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Test connection" }));
 
     expect(await screen.findByText("Connected")).toBeInTheDocument();
+  });
+
+  it("activates a draft source and reflects the new status", async () => {
+    let status: "DRAFT" | "ACTIVE" = "DRAFT";
+    server.use(
+      http.get("*/api/v1/squads/:squadId/measurement-sources", () =>
+        HttpResponse.json(
+          page([resourceRecord({ id: "source-1", kind: "measurement-source", status, data: { name: "prod", providerType: "PROMETHEUS", baseUrl: "https://prom" } })]),
+        ),
+      ),
+      http.post("*/api/v1/measurement-sources/:sourceId/activations", () => {
+        status = "ACTIVE";
+        return HttpResponse.json(resourceRecord({ id: "source-1", kind: "measurement-source", status }), { status: 201 });
+      }),
+    );
+    renderWorkspace();
+    const user = userEvent.setup();
+
+    await screen.findByText("prod");
+    await user.click(screen.getByRole("button", { name: "Activate" }));
+
+    expect(await screen.findByRole("button", { name: "Retire" })).toBeInTheDocument();
+  });
+
+  it("retires an active source and hides the action once retired", async () => {
+    let status: "ACTIVE" | "RETIRED" = "ACTIVE";
+    server.use(
+      http.get("*/api/v1/squads/:squadId/measurement-sources", () =>
+        HttpResponse.json(
+          page([resourceRecord({ id: "source-1", kind: "measurement-source", status, data: { name: "prod", providerType: "PROMETHEUS", baseUrl: "https://prom" } })]),
+        ),
+      ),
+      http.post("*/api/v1/measurement-sources/:sourceId/retirements", () => {
+        status = "RETIRED";
+        return HttpResponse.json(resourceRecord({ id: "source-1", kind: "measurement-source", status }), { status: 201 });
+      }),
+    );
+    renderWorkspace();
+    const user = userEvent.setup();
+
+    await screen.findByText("prod");
+    await user.click(screen.getByRole("button", { name: "Retire" }));
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retire" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Activate" })).not.toBeInTheDocument();
+  });
+
+  it("surfaces an error when activating a source fails", async () => {
+    server.use(
+      http.get("*/api/v1/squads/:squadId/measurement-sources", () =>
+        HttpResponse.json(
+          page([resourceRecord({ id: "source-1", kind: "measurement-source", status: "DRAFT", data: { name: "prod", providerType: "PROMETHEUS", baseUrl: "https://prom" } })]),
+        ),
+      ),
+      http.post("*/api/v1/measurement-sources/:sourceId/activations", () =>
+        HttpResponse.json({ title: "Conflict" }, { status: 409 }),
+      ),
+    );
+    renderWorkspace();
+    const user = userEvent.setup();
+
+    await screen.findByText("prod");
+    await user.click(screen.getByRole("button", { name: "Activate" }));
+
+    expect(await screen.findByText("Conflict")).toBeInTheDocument();
   });
 });
