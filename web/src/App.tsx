@@ -12,6 +12,7 @@ import {
   DatabaseZap,
   FileSearch,
   Filter,
+  Gauge,
   LayoutDashboard,
   LoaderCircle,
   Menu,
@@ -29,6 +30,7 @@ import { loadCatalog } from "./api";
 import { currentUser, onAuthChange, signOut, type GoogleUser } from "./auth";
 import { CreateFitnessFunction } from "./components/CreateFitnessFunction";
 import { FitnessDetails } from "./components/FitnessDetails";
+import { OverviewWorkspace } from "./components/OverviewWorkspace";
 import { ProducersWorkspace } from "./components/ProducersWorkspace";
 import { SettingsWorkspace } from "./components/SettingsWorkspace";
 import { SetupWorkspace } from "./components/SetupWorkspace";
@@ -39,13 +41,14 @@ import type { AcquisitionMode, Catalog, Enforcement, FitnessFunction, Lifecycle 
 import { activeDefinition, initials, matchesQuery, relativeTime } from "./utils";
 
 type FilterValue<T extends string> = T | "ALL";
-type WorkspaceView = "functions" | "targets" | "sources" | "producers" | "settings";
+type WorkspaceView = "functions" | "targets" | "sources" | "producers" | "insights" | "settings";
 
 const breadcrumbs: Record<WorkspaceView, string> = {
   functions: "Fitness functions",
   targets: "Fitness targets",
   sources: "Measurement sources",
   producers: "Measurement producers",
+  insights: "Insights",
   settings: "Settings",
 };
 
@@ -137,6 +140,7 @@ export function App() {
           <button className={clsx(view === "sources" && "active")} onClick={() => setView("sources")}><DatabaseZap size={18} /><span>Measurement sources</span></button>
           <button className={clsx(view === "producers" && "active")} onClick={() => setView("producers")}><Network size={18} /><span>Producers</span></button>
           <p>Governance</p>
+          <button className={clsx(view === "insights" && "active")} onClick={() => setView("insights")}><Gauge size={18} /><span>Insights</span></button>
           <button disabled title="Template workspace is planned"><Blocks size={18} /><span>Templates</span><em>Soon</em></button>
           <button disabled title="Waiver workspace is planned"><ShieldCheck size={18} /><span>Waivers</span><em>Soon</em></button>
         </nav>
@@ -271,6 +275,7 @@ export function App() {
         {view === "targets" && catalog && <TargetsWorkspace catalog={catalog} />}
         {view === "sources" && catalog && <SourcesWorkspace catalog={catalog} />}
         {view === "producers" && catalog && <ProducersWorkspace catalog={catalog} />}
+        {view === "insights" && catalog && <OverviewWorkspace catalog={catalog} />}
         {view === "settings" && catalog && (
           <SettingsWorkspace catalog={catalog} onCreated={() => void catalogQuery.refetch()} />
         )}

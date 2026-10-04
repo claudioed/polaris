@@ -266,4 +266,34 @@ describe("TargetsWorkspace", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Conflict");
   });
+
+  it("falls back to a generic dialog title when the target has no name", async () => {
+    server.use(
+      http.get("*/api/v1/squads/:squadId/fitness-targets", () =>
+        HttpResponse.json(page([resourceRecord({ id: "target-1", kind: "fitness-target", status: "ACTIVE", data: {} })])),
+      ),
+      http.get("*/api/v1/fitness-targets/:targetId/fitness-history", () => HttpResponse.json(page([]))),
+    );
+    renderWorkspace();
+    const user = userEvent.setup();
+
+    await screen.findByText("Unnamed target");
+    await user.click(screen.getByRole("button", { name: /History/ }));
+    expect(within(screen.getByRole("dialog")).getByRole("heading", { name: "Target" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+
+    await user.click(screen.getByRole("button", { name: "Transition" }));
+    expect(within(screen.getByRole("dialog")).getByRole("heading", { name: "Target" })).toBeInTheDocument();
+  });
+
+  it("shows an unnamed squad placeholder in the squad picker", async () => {
+    const unnamed = squadFixture({ id: "squad-2", data: {} });
+    server.use(
+      http.get("*/api/v1/squads/:squadId/fitness-targets", () => HttpResponse.json(page([]))),
+    );
+    renderWorkspace({ squads: [squadFixture(), unnamed] });
+
+    await screen.findByText("No fitness targets yet");
+    expect(screen.getByRole("option", { name: /Unnamed squad/ })).toBeInTheDocument();
+  });
 });

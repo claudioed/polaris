@@ -306,6 +306,16 @@ main { min-width: 0; }
 .row-action { margin-left: auto; }
 .row-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
+.scorecard-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 13px; margin-top: 14px; }
+.scorecard { background: white; border: 1px solid var(--line); border-radius: 10px; padding: 15px; display: flex; flex-direction: column; gap: 11px; }
+.scorecard > header { display: flex; align-items: flex-start; gap: 9px; color: #126f67; }
+.scorecard > header div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.scorecard > header strong { color: #1b2433; font-size: 13px; }
+.scorecard > header small { color: #8994a4; font-size: 10px; }
+.scorecard .review-grid { grid-template-columns: repeat(4, 1fr); }
+.scorecard-freshness { color: #8994a4; font-size: 9px; display: inline-flex; align-items: center; gap: 5px; }
+.scorecard-freshness-error { color: var(--red); }
+
 @media (max-width: 1120px) {
   .metric-grid { grid-template-columns: 1fr 1fr; }
   .table-head, .table-row { grid-template-columns: minmax(240px, 2fr) minmax(140px, 1fr) 85px 95px 95px; }
