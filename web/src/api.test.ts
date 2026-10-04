@@ -4,16 +4,37 @@ import { setupServer } from "msw/node";
 import {
   ApiError,
   activateFitnessFunction,
+  adoptFitnessFunctionTemplate,
+  cancelEvaluationRequest,
+  collectNow,
+  createEvaluationRequest,
   createFitnessFunction,
+  createFitnessFunctionTemplate,
   createFitnessFunctionVersion,
   createFitnessTarget,
   createSquad,
   createTribe,
+  createWaiver,
+  getCollectionAttempt,
+  getEvaluation,
+  getEvaluationRequest,
+  getFitnessTargetHistory,
+  getSquadFitnessOverview,
   getSquadSources,
   getSquadTargets,
+  getTribeFitnessOverview,
+  listCollectionAttempts,
+  listEvaluations,
+  listFitnessFunctionTemplates,
   loadCatalog,
+  retryCollectionAttempt,
+  transitionFitnessTarget,
+  transitionWaiver,
 } from "./api";
 import {
+  collectionAttempt,
+  evaluation,
+  evaluationRequest,
   fitnessFunction,
   page,
   problem,
@@ -21,6 +42,7 @@ import {
   resourceRecord,
   squad as squadFixture,
   tribe as tribeFixture,
+  waiver,
 } from "./test/fixtures";
 
 function fakeToken(): string {
@@ -427,5 +449,179 @@ describe("endpoints", () => {
     expect(request.path).toBe("/api/v1/fitness-functions/fn-1/versions");
     expect(request.headers.get("If-Match")).toBe('"3"');
     expect(request.body).toEqual(definition);
+  });
+});
+
+describe("fitness target lifecycle + history", () => {
+  it("transitions a target's lifecycle with an optional reason", async () => {
+    const transitioned = resourceRecord({ id: "target-1", status: "DEPRECATED" });
+    const captured = useCapture("*/api/v1/fitness-targets/:targetId/lifecycle-transitions", transitioned);
+
+    await expect(transitionFitnessTarget("target-1", "DEPRECATED", "Replacement available")).resolves.toEqual(
+      transitioned,
+    );
+
+    const request = captured.only();
+    expect(request.method).toBe("POST");
+    expect(request.body).toEqual({ status: "DEPRECATED", reason: "Replacement available" });
+  });
+
+  it("omits the reason field when none is given", async () => {
+    const captured = useCapture(
+      "*/api/v1/fitness-targets/:targetId/lifecycle-transitions",
+      resourceRecord({ id: "target-1", status: "RETIRED" }),
+    );
+
+    await transitionFitnessTarget("target-1", "RETIRED");
+
+    expect(captured.only().body).toEqual({ status: "RETIRED" });
+  });
+
+  it("paginates through a target's fitness history", async () => {
+    const entry = resourceRecord({ id: "history-1", kind: "fitness-history" });
+    useCapture("*/api/v1/fitness-targets/:targetId/fitness-history", page([entry]));
+
+    await expect(getFitnessTargetHistory("target-1")).resolves.toEqual([entry]);
+  });
+});
+
+describe("evaluations and evaluation requests", () => {
+  it("lists evaluations for a fitness function", async () => {
+    const recorded = evaluation({ evaluationId: "evaluation-9" });
+    const captured = useCapture("*/api/v1/fitness-functions/:id/evaluations", page([recorded]));
+
+    await expect(listEvaluations("fn-1")).resolves.toEqual([recorded]);
+    expect(captured.only().path).toBe("/api/v1/fitness-functions/fn-1/evaluations");
+  });
+
+  it("gets a single evaluation", async () => {
+    const recorded = evaluation({ evaluationId: "evaluation-9" });
+    useCapture("*/api/v1/evaluations/:evaluationId", recorded);
+
+    await expect(getEvaluation("evaluation-9")).resolves.toEqual(recorded);
+  });
+
+  it("creates an evaluation request with an empty body", async () => {
+    const created = evaluationRequest({ id: "request-9" });
+    const captured = useCapture("*/api/v1/fitness-functions/:id/evaluation-requests", created);
+
+    await expect(createEvaluationRequest("fn-1")).resolves.toEqual(created);
+    const request = captured.only();
+    expect(request.method).toBe("POST");
+    expect(request.body).toEqual({});
+  });
+
+  it("gets and cancels an evaluation request", async () => {
+    const pending = evaluationRequest({ id: "request-9", status: "PENDING" });
+    const cancelled = evaluationRequest({ id: "request-9", status: "CANCELLED" });
+    useCapture("*/api/v1/evaluation-requests/:requestId", pending);
+    await expect(getEvaluationRequest("request-9")).resolves.toEqual(pending);
+
+    const captured = useCapture("*/api/v1/evaluation-requests/:requestId/cancellations", cancelled);
+    await expect(cancelEvaluationRequest("request-9")).resolves.toEqual(cancelled);
+    expect(captured.only().method).toBe("POST");
+  });
+});
+
+describe("collection attempts", () => {
+  it("lists collection attempts for a fitness function", async () => {
+    const attempt = collectionAttempt({ id: "attempt-9" });
+    useCapture("*/api/v1/fitness-functions/:id/collection-attempts", page([attempt]));
+
+    await expect(listCollectionAttempts("fn-1")).resolves.toEqual([attempt]);
+  });
+
+  it("gets a single collection attempt", async () => {
+    const attempt = collectionAttempt({ id: "attempt-9" });
+    useCapture("*/api/v1/collection-attempts/:attemptId", attempt);
+
+    await expect(getCollectionAttempt("attempt-9")).resolves.toEqual(attempt);
+  });
+
+  it("triggers an on-demand collection", async () => {
+    const recorded = evaluation();
+    const captured = useCapture("*/api/v1/fitness-functions/:id/collection-attempts", recorded);
+
+    await expect(collectNow("fn-1")).resolves.toEqual(recorded);
+    expect(captured.only().method).toBe("POST");
+  });
+
+  it("retries a failed collection attempt", async () => {
+    const recorded = evaluation();
+    const captured = useCapture("*/api/v1/collection-attempts/:attemptId/retries", recorded);
+
+    await expect(retryCollectionAttempt("attempt-9")).resolves.toEqual(recorded);
+    expect(captured.only().method).toBe("POST");
+  });
+});
+
+describe("waivers", () => {
+  it("proposes a waiver with the given data", async () => {
+    const proposed = waiver({ id: "waiver-9" });
+    const captured = useCapture("*/api/v1/fitness-functions/:id/waivers", proposed);
+
+    await expect(
+      createWaiver("fn-1", { reason: "Infra replacement", expiresAt: "2026-08-01T10:00:00Z" }),
+    ).resolves.toEqual(proposed);
+    expect(captured.only().body).toEqual({ reason: "Infra replacement", expiresAt: "2026-08-01T10:00:00Z" });
+  });
+
+  it("transitions a waiver with an optional reason", async () => {
+    const approved = waiver({ id: "waiver-9", status: "APPROVED" });
+    const captured = useCapture("*/api/v1/waivers/:waiverId/:transition", approved);
+
+    await expect(transitionWaiver("waiver-9", "approvals", "Risk accepted")).resolves.toEqual(approved);
+    const request = captured.only();
+    expect(request.path).toBe("/api/v1/waivers/waiver-9/approvals");
+    expect(request.body).toEqual({ reason: "Risk accepted" });
+  });
+
+  it("omits the reason field when transitioning without one", async () => {
+    const captured = useCapture("*/api/v1/waivers/:waiverId/:transition", waiver({ status: "REJECTED" }));
+
+    await transitionWaiver("waiver-9", "rejections");
+
+    expect(captured.only().body).toEqual({});
+  });
+});
+
+describe("fitness function templates", () => {
+  it("lists a tribe's templates", async () => {
+    const template = resourceRecord({ id: "template-1", kind: "fitness-function-template", data: { name: "Resilience baseline" } });
+    useCapture("*/api/v1/tribes/:tribeId/fitness-function-templates", page([template]));
+
+    await expect(listFitnessFunctionTemplates("tribe-1")).resolves.toEqual([template]);
+  });
+
+  it("publishes a new template", async () => {
+    const created = resourceRecord({ id: "template-new", kind: "fitness-function-template" });
+    const captured = useCapture("*/api/v1/tribes/:tribeId/fitness-function-templates", created);
+
+    await createFitnessFunctionTemplate("tribe-1", { name: "Resilience baseline" });
+    expect(captured.only().body).toEqual({ name: "Resilience baseline" });
+  });
+
+  it("adopts a template into a squad", async () => {
+    const adoption = resourceRecord({ id: "adoption-1", kind: "template-adoption" });
+    const captured = useCapture("*/api/v1/fitness-function-templates/:templateId/adoptions", adoption);
+
+    await adoptFitnessFunctionTemplate("template-1", { squadId: "squad-1" });
+    expect(captured.only().body).toEqual({ squadId: "squad-1" });
+  });
+});
+
+describe("fitness overview", () => {
+  it("gets a squad overview", async () => {
+    const overview = { scope: "squad" as const, scopeId: "squad-1", generatedAt: "2026-08-01T10:00:00Z", status: "AVAILABLE" as const };
+    useCapture("*/api/v1/squads/:squadId/fitness-overview", overview);
+
+    await expect(getSquadFitnessOverview("squad-1")).resolves.toEqual(overview);
+  });
+
+  it("gets a tribe overview", async () => {
+    const overview = { scope: "tribe" as const, scopeId: "tribe-1", generatedAt: "2026-08-01T10:00:00Z", status: "AVAILABLE" as const };
+    useCapture("*/api/v1/tribes/:tribeId/fitness-overview", overview);
+
+    await expect(getTribeFitnessOverview("tribe-1")).resolves.toEqual(overview);
   });
 });

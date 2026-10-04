@@ -183,6 +183,27 @@ main { min-width: 0; }
 .details-footer { border-top: 1px solid var(--line); padding: 14px 22px; }
 .details-footer .button { width: 100%; }
 
+.detail-tabs { display: flex; gap: 4px; padding: 10px 22px 0; border-bottom: 1px solid var(--line); }
+.detail-tabs button { border: 0; background: transparent; color: #7a8595; font-size: 11px; font-weight: 600; padding: 9px 4px; margin-right: 14px; border-bottom: 2px solid transparent; }
+.detail-tabs button.active { color: #126f67; border-bottom-color: #14b8a6; }
+.detail-tabs button:hover { color: #334155; }
+
+.request-list, .evaluation-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.request-row { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid #e2e6ec; border-radius: 7px; background: #fbfcfd; }
+.request-row small { color: #8c97a7; font-size: 9px; flex: 1; }
+.evaluation-row { padding: 11px 12px; border: 1px solid #e2e6ec; border-radius: 7px; background: #fbfcfd; display: flex; flex-direction: column; gap: 6px; }
+.evaluation-row > div { display: flex; gap: 6px; align-items: center; }
+.evaluation-row p { color: #687589; font-size: 10px; }
+.outcome-pill, .disposition-pill { display: inline-flex; align-items: center; font-size: 9px; font-weight: 700; letter-spacing: .04em; padding: 4px 7px; border-radius: 4px; }
+.outcome-pill.pass { color: #08785b; background: #e6f6f0; }
+.outcome-pill.warn { color: #98620f; background: #fdf4e2; }
+.outcome-pill.fail, .outcome-pill.error { color: #a93636; background: #fceeee; }
+.outcome-pill.not_applicable { color: #697588; background: #eef1f4; }
+.disposition-pill.accepted { color: #08785b; background: #e6f6f0; }
+.disposition-pill.attention_required { color: #98620f; background: #fdf4e2; }
+.disposition-pill.blocked { color: #a93636; background: #fceeee; }
+.disposition-pill.waived { color: #356ae6; background: #edf2ff; }
+
 .dialog-backdrop { position: fixed; inset: 0; background: rgba(9,14,23,.68); z-index: 100; display: flex; justify-content: center; align-items: center; padding: 24px; backdrop-filter: blur(3px); }
 .create-dialog { width: min(810px, 100%); max-height: calc(100vh - 48px); background: white; border-radius: 12px; box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden; animation: dialog-in .18s ease-out; }
 .setup-dialog { width: min(650px, 100%); max-height: calc(100vh - 48px); overflow-y: auto; background: white; border-radius: 12px; box-shadow: var(--shadow); animation: dialog-in .18s ease-out; }

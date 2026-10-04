@@ -1,6 +1,10 @@
 import type {
   Catalog,
+  CollectionAttempt,
   Criterion,
+  CriterionResult,
+  Evaluation,
+  EvaluationRequest,
   FitnessDefinition,
   FitnessFunction,
   FitnessVersion,
@@ -9,6 +13,7 @@ import type {
   Problem,
   ResourceRecord,
   Squad,
+  Waiver,
 } from "../types";
 
 /**
@@ -151,6 +156,72 @@ export function catalog(partial: Partial<Catalog> = {}): Catalog {
     tribes: [tribe()],
     squads: [squad()],
     functions: [fitnessFunction()],
+    ...partial,
+  };
+}
+
+export function evaluationRequest(partial: Partial<EvaluationRequest> = {}): EvaluationRequest {
+  return {
+    ...resourceRecord({ id: "request-1", kind: "evaluation-request", status: "PENDING", data: {} }),
+    kind: "evaluation-request",
+    status: "PENDING",
+    ...partial,
+  };
+}
+
+export function criterionResult(partial: Partial<CriterionResult> = {}): CriterionResult {
+  return {
+    criterionKey: "error_rate",
+    value: 0.8,
+    unit: "percent",
+    outcome: "PASS",
+    ...partial,
+  };
+}
+
+export function evaluation(partial: Partial<Evaluation> = {}): Evaluation {
+  return {
+    evaluationId: "evaluation-1",
+    fitnessFunctionId: "fn-1",
+    fitnessFunctionVersion: 1,
+    acquisitionMode: "PUSH",
+    originId: "submission-1",
+    outcome: "PASS",
+    disposition: "ACCEPTED",
+    observedAt: "2026-08-01T10:00:00Z",
+    validUntil: "2026-08-01T10:30:00Z",
+    criterionResults: [criterionResult()],
+    data: {},
+    ...partial,
+  };
+}
+
+export function collectionAttempt(partial: Partial<CollectionAttempt> = {}): CollectionAttempt {
+  return {
+    ...resourceRecord({
+      id: "attempt-1",
+      kind: "collection-attempt",
+      status: "SUCCEEDED",
+      data: { sourceId: "source-1", measurements: [], evidence: [] },
+    }),
+    kind: "collection-attempt",
+    status: "SUCCEEDED",
+    data: { sourceId: "source-1", measurements: [], evidence: [] },
+    ...partial,
+  };
+}
+
+export function waiver(partial: Partial<Waiver> = {}): Waiver {
+  return {
+    ...resourceRecord({
+      id: "waiver-1",
+      kind: "waiver",
+      status: "PROPOSED",
+      data: { reason: "Infrastructure replacement temporarily increases recovery time" },
+    }),
+    kind: "waiver",
+    status: "PROPOSED",
+    data: { reason: "Infrastructure replacement temporarily increases recovery time" },
     ...partial,
   };
 }
