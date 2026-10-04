@@ -4,8 +4,10 @@ import { setupServer } from "msw/node";
 import {
   ApiError,
   activateFitnessFunction,
+  activateMeasurementSource,
   adoptFitnessFunctionTemplate,
   cancelEvaluationRequest,
+  checkSourceConnection,
   collectNow,
   createEvaluationRequest,
   createFitnessFunction,
@@ -27,6 +29,7 @@ import {
   listEvaluations,
   listFitnessFunctionTemplates,
   loadCatalog,
+  retireMeasurementSource,
   retryCollectionAttempt,
   transitionFitnessTarget,
   transitionWaiver,
@@ -623,5 +626,30 @@ describe("fitness overview", () => {
     useCapture("*/api/v1/tribes/:tribeId/fitness-overview", overview);
 
     await expect(getTribeFitnessOverview("tribe-1")).resolves.toEqual(overview);
+  });
+});
+
+describe("measurement source lifecycle", () => {
+  it("checks a source's connection", async () => {
+    const check = resourceRecord({ id: "check-1", kind: "source-connection-check", data: { status: "FAILED" } });
+    useCapture("*/api/v1/measurement-sources/:sourceId/connection-checks", check);
+
+    await expect(checkSourceConnection("source-1")).resolves.toEqual(check);
+  });
+
+  it("activates a measurement source with an optional reason", async () => {
+    const activated = resourceRecord({ id: "source-1", kind: "measurement-source", status: "ACTIVE" });
+    const captured = useCapture("*/api/v1/measurement-sources/:sourceId/activations", activated);
+
+    await expect(activateMeasurementSource("source-1", "Connectivity verified")).resolves.toEqual(activated);
+    expect(captured.only().body).toEqual({ reason: "Connectivity verified" });
+  });
+
+  it("retires a measurement source without a reason", async () => {
+    const retired = resourceRecord({ id: "source-1", kind: "measurement-source", status: "RETIRED" });
+    const captured = useCapture("*/api/v1/measurement-sources/:sourceId/retirements", retired);
+
+    await expect(retireMeasurementSource("source-1")).resolves.toEqual(retired);
+    expect(captured.only().body).toEqual({});
   });
 });

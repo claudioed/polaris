@@ -6,7 +6,7 @@ import type { Catalog, ResourceRecord } from "../types";
 
 export interface WorkspaceColumn<T> {
   header: string;
-  render: (item: T) => ReactNode;
+  render: (item: T, refetch: () => void) => ReactNode;
 }
 
 interface Props<T extends ResourceRecord> {
@@ -144,7 +144,7 @@ export function ResourceWorkspace<T extends ResourceRecord>({
               {items.map((item) => (
                 <div className="simple-row" role="row" style={{ gridTemplateColumns: gridTemplate }} key={item.id}>
                   {columns.map((column) => (
-                    <span role="cell" key={column.header}>{column.render(item)}</span>
+                    <span role="cell" key={column.header}>{column.render(item, () => void query.refetch())}</span>
                   ))}
                 </div>
               ))}

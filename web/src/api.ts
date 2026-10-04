@@ -203,6 +203,20 @@ export function checkSourceConnection(sourceId: string): Promise<ResourceRecord>
   });
 }
 
+export function activateMeasurementSource(sourceId: string, reason?: string): Promise<ResourceRecord> {
+  return request(`/measurement-sources/${encodeURIComponent(sourceId)}/activations`, {
+    method: "POST",
+    body: JSON.stringify(reason ? { reason } : {}),
+  });
+}
+
+export function retireMeasurementSource(sourceId: string, reason?: string): Promise<ResourceRecord> {
+  return request(`/measurement-sources/${encodeURIComponent(sourceId)}/retirements`, {
+    method: "POST",
+    body: JSON.stringify(reason ? { reason } : {}),
+  });
+}
+
 export async function getSquadProducers(squadId: string): Promise<Page<ResourceRecord>> {
   return {
     items: await listAll(`/squads/${encodeURIComponent(squadId)}/measurement-producers`),
