@@ -2,6 +2,7 @@ import { currentToken, signOut } from "./auth";
 import type {
   Catalog,
   CollectionAttempt,
+  DomainEvent,
   Evaluation,
   EvaluationRequest,
   FitnessDefinition,
@@ -366,4 +367,31 @@ export function getSquadFitnessOverview(squadId: string): Promise<FitnessOvervie
 
 export function getTribeFitnessOverview(tribeId: string): Promise<FitnessOverview> {
   return request(`/tribes/${encodeURIComponent(tribeId)}/fitness-overview`);
+}
+
+// --- Events (activity feed) ---------------------------------------------------
+//
+// `/events` is a cursor-based outbox feed scoped by `consumerId`. Unlike every
+// other collection here, its pages ALWAYS carry a `nextCursor` (the handler
+// returns the next sequence unconditionally), so a drain terminates on an
+// empty page rather than an absent cursor. The feed polls but never
+// acknowledges: acknowledgement is for at-most-once processors, and a
+// human-facing feed should keep showing history.
+
+const EVENTS_MAX_PAGES = 50;
+
+export async function pollEvents(consumerId: string, cursor: number): Promise<{ events: DomainEvent[]; nextCursor: number }> {
+  const events: DomainEvent[] = [];
+  let current = cursor;
+  for (let requestCount = 0; requestCount < EVENTS_MAX_PAGES; requestCount += 1) {
+    const params = new URLSearchParams({ consumerId, limit: "200" });
+    if (current > 0) params.set("cursor", String(current));
+    const result = await request<Page<DomainEvent>>(`/events?${params.toString()}`);
+    events.push(...result.items);
+    if (result.items.length === 0) break;
+    const next = Number(result.nextCursor);
+    if (!Number.isFinite(next) || next <= current) break;
+    current = next;
+  }
+  return { events, nextCursor: current };
 }

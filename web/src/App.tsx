@@ -31,6 +31,7 @@ import { currentUser, onAuthChange, signOut, type GoogleUser } from "./auth";
 import { CreateFitnessFunction } from "./components/CreateFitnessFunction";
 import { FitnessDetails } from "./components/FitnessDetails";
 import { OverviewWorkspace } from "./components/OverviewWorkspace";
+import { ActivityWorkspace } from "./components/ActivityWorkspace";
 import { ProducersWorkspace } from "./components/ProducersWorkspace";
 import { SettingsWorkspace } from "./components/SettingsWorkspace";
 import { SetupWorkspace } from "./components/SetupWorkspace";
@@ -42,7 +43,7 @@ import type { AcquisitionMode, Catalog, Enforcement, FitnessFunction, Lifecycle 
 import { activeDefinition, initials, matchesQuery, relativeTime } from "./utils";
 
 type FilterValue<T extends string> = T | "ALL";
-type WorkspaceView = "functions" | "targets" | "sources" | "producers" | "insights" | "templates" | "settings";
+type WorkspaceView = "functions" | "targets" | "sources" | "producers" | "insights" | "templates" | "activity" | "settings";
 
 const breadcrumbs: Record<WorkspaceView, string> = {
   functions: "Fitness functions",
@@ -51,6 +52,7 @@ const breadcrumbs: Record<WorkspaceView, string> = {
   producers: "Measurement producers",
   insights: "Insights",
   templates: "Templates",
+  activity: "Activity",
   settings: "Settings",
 };
 
@@ -137,6 +139,7 @@ export function App() {
           <button className={clsx(view === "functions" && "active")} onClick={() => { setView("functions"); setSearch(""); setLifecycle("ALL"); setEnforcement("ALL"); setAcquisition("ALL"); window.scrollTo({ top: 0, behavior: "smooth" }); }}><LayoutDashboard size={18} /><span>Overview</span></button>
           <button className={clsx(view === "functions" && "active")} onClick={() => setView("functions")}><CircleGauge size={18} /><span>Fitness functions</span><em>{catalog?.functions.length ?? "—"}</em></button>
           <button disabled title="Evaluation workspace is planned"><Activity size={18} /><span>Evaluations</span><em>Soon</em></button>
+          <button className={clsx(view === "activity" && "active")} onClick={() => setView("activity")}><Activity size={18} /><span>Activity</span></button>
           <button className={clsx(view === "targets" && "active")} onClick={() => setView("targets")}><Target size={18} /><span>Fitness targets</span></button>
           <p>Connections</p>
           <button className={clsx(view === "sources" && "active")} onClick={() => setView("sources")}><DatabaseZap size={18} /><span>Measurement sources</span></button>
@@ -279,6 +282,7 @@ export function App() {
         {view === "producers" && catalog && <ProducersWorkspace catalog={catalog} />}
         {view === "insights" && catalog && <OverviewWorkspace catalog={catalog} />}
         {view === "templates" && catalog && <TemplatesWorkspace catalog={catalog} />}
+        {view === "activity" && <ActivityWorkspace />}
         {view === "settings" && catalog && (
           <SettingsWorkspace catalog={catalog} onCreated={() => void catalogQuery.refetch()} />
         )}

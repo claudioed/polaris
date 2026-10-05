@@ -215,3 +215,15 @@ export interface FitnessOverview {
   generatedAt: string;
   status: "AVAILABLE";
 }
+
+export interface DomainEvent {
+  id: string;
+  type: string;
+  version: number;
+  aggregateType: string;
+  aggregateId: string;
+  occurredAt: string;
+  actor: string;
+  correlationId: string;
+  payload: Record<string, unknown>;
+}

@@ -316,6 +316,16 @@ main { min-width: 0; }
 .scorecard-freshness { color: #8994a4; font-size: 9px; display: inline-flex; align-items: center; gap: 5px; }
 .scorecard-freshness-error { color: var(--red); }
 
+.activity-list { display: flex; flex-direction: column; }
+.activity-row { display: flex; align-items: center; gap: 12px; padding: 13px 17px; border-bottom: 1px solid #edf0f4; }
+.activity-row:last-child { border-bottom: 0; }
+.activity-row > div { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.activity-row strong { color: #273244; font-size: 12px; font-weight: 600; }
+.activity-row small { color: #8994a4; font-size: 10px; }
+.activity-dot { width: 8px; height: 8px; border-radius: 50%; background: #14b8a6; flex: 0 0 auto; }
+.activity-dot.system { background: #9aa4b2; }
+.activity-correlation { color: #8994a4; background: #f1f3f6; border: 1px solid #e1e5eb; border-radius: 4px; font: 500 9px monospace; padding: 3px 6px; flex: 0 0 auto; }
+
 @media (max-width: 1120px) {
   .metric-grid { grid-template-columns: 1fr 1fr; }
   .table-head, .table-row { grid-template-columns: minmax(240px, 2fr) minmax(140px, 1fr) 85px 95px 95px; }
