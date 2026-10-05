@@ -29,6 +29,7 @@ import {
   listEvaluations,
   listFitnessFunctionTemplates,
   loadCatalog,
+  pollEvents,
   retireMeasurementSource,
   retryCollectionAttempt,
   transitionFitnessTarget,
@@ -651,5 +652,59 @@ describe("measurement source lifecycle", () => {
 
     await expect(retireMeasurementSource("source-1")).resolves.toEqual(retired);
     expect(captured.only().body).toEqual({});
+  });
+});
+
+describe("events", () => {
+  it("drains the outbox feed until an empty page and returns the advanced cursor", async () => {
+    const queries: string[] = [];
+    server.use(
+      http.get("*/api/v1/events", ({ request }) => {
+        const url = new URL(request.url);
+        queries.push(url.search);
+        const cursor = url.searchParams.get("cursor");
+        if (cursor === null) {
+          return HttpResponse.json({ items: [{ id: "e-1" }, { id: "e-2" }], nextCursor: "2" });
+        }
+        if (cursor === "2") {
+          return HttpResponse.json({ items: [{ id: "e-3" }], nextCursor: "3" });
+        }
+        return HttpResponse.json({ items: [], nextCursor: "3" });
+      }),
+    );
+
+    const result = await pollEvents("consumer-1", 0);
+
+    expect(result.events.map((item) => item.id)).toEqual(["e-1", "e-2", "e-3"]);
+    expect(result.nextCursor).toBe(3);
+    expect(queries[0]).toBe("?consumerId=consumer-1&limit=200");
+    expect(queries[1]).toBe("?consumerId=consumer-1&limit=200&cursor=2");
+    expect(queries[2]).toBe("?consumerId=consumer-1&limit=200&cursor=3");
+  });
+
+  it("skips the cursor parameter entirely on a first poll from zero", async () => {
+    const captured = useCapture("*/api/v1/events", { items: [], nextCursor: "0" });
+
+    await expect(pollEvents("consumer-1", 0)).resolves.toEqual({ events: [], nextCursor: 0 });
+
+    expect(captured.only().query.get("cursor")).toBeNull();
+    expect(captured.only().query.get("consumerId")).toBe("consumer-1");
+  });
+
+  it("stops when the server stops advancing the cursor", async () => {
+    let calls = 0;
+    server.use(
+      http.get("*/api/v1/events", () => {
+        calls += 1;
+        // Non-empty page whose nextCursor never advances.
+        return HttpResponse.json({ items: [{ id: "e-1" }], nextCursor: "5" });
+      }),
+    );
+
+    const result = await pollEvents("consumer-1", 5);
+
+    expect(result.events).toEqual([{ id: "e-1" }]);
+    expect(result.nextCursor).toBe(5);
+    expect(calls).toBe(1);
   });
 });
